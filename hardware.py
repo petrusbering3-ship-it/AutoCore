@@ -42,7 +42,7 @@ def _scan_macos():
     # GPU
     raw = _run(["system_profiler", "SPDisplaysDataType", "-json"])
     try:
-        info["gpus"] = [g.get("sppci_model", "Ukendt") for g in json.loads(raw).get("SPDisplaysDataType", [])]
+        info["gpus"] = [g.get("sppci_model", "Unknown") for g in json.loads(raw).get("SPDisplaysDataType", [])]
     except Exception:
         info["gpus"] = []
 
@@ -64,22 +64,22 @@ def _scan_macos():
             elif card_type:
                 info["wifi"] = card_type
             else:
-                info["wifi"] = "Ukendt"
+                info["wifi"] = "Unknown"
         else:
-            info["wifi"] = "Ingen WiFi"
+            info["wifi"] = "No WiFi"
     except Exception:
-        info["wifi"] = "Ukendt"
+        info["wifi"] = "Unknown"
 
     # Audio codec via ioreg
     audio_raw = _run(["ioreg", "-r", "-c", "IOHDACodecDevice"])
     match = re.search(r'"IOHDACodecVendorID"\s*=\s*(\d+)', audio_raw)
-    info["audio_codec"] = match.group(1) if match else "Ukendt"
+    info["audio_codec"] = match.group(1) if match else "Unknown"
 
     # Ethernet
     eth_raw = _run(["system_profiler", "SPEthernetDataType", "-json"])
     try:
         eth_data = json.loads(eth_raw).get("SPEthernetDataType", [])
-        info["ethernet"] = [e.get("spethernet_chipset-id", e.get("_name", "Ukendt")) for e in eth_data]
+        info["ethernet"] = [e.get("spethernet_chipset-id", e.get("_name", "Unknown")) for e in eth_data]
     except Exception:
         info["ethernet"] = []
 
@@ -121,7 +121,7 @@ def _scan_windows():
     if not cpu:
         raw = _run('wmic cpu get Name /value', shell=True)
         m = re.search(r'Name=(.+)', raw)
-        cpu = m.group(1).strip() if m else "Ukendt"
+        cpu = m.group(1).strip() if m else "Unknown"
     info["cpu"] = cpu
 
     cores = _ps("(Get-CimInstance Win32_Processor).NumberOfCores")
@@ -145,7 +145,7 @@ def _scan_windows():
     # WiFi — netsh virker på alle Windows versioner
     wifi_raw = _run('netsh wlan show drivers', shell=True)
     m = re.search(r'Description\s+:\s+(.+)', wifi_raw)
-    info["wifi"] = m.group(1).strip() if m else "Ingen WiFi / Ukendt"
+    info["wifi"] = m.group(1).strip() if m else "No WiFi / Unknown"
 
     # Audio
     audio = _ps("(Get-CimInstance Win32_SoundDevice).Name")
@@ -200,7 +200,7 @@ def _scan_linux():
     # CPU — /proc/cpuinfo er altid tilgængelig
     cpuinfo = _run("grep 'model name' /proc/cpuinfo | head -1", shell=True)
     m = re.search(r'model name\s*:\s*(.+)', cpuinfo)
-    info["cpu"] = m.group(1).strip() if m else "Ukendt"
+    info["cpu"] = m.group(1).strip() if m else "Unknown"
     info["cpu_cores"] = _run("nproc", shell=True)
 
     # RAM — /proc/meminfo er altid tilgængelig
@@ -215,25 +215,25 @@ def _scan_linux():
     else:
         # Fallback: læs fra /sys/class/drm
         drm = _run("ls /sys/class/drm/", shell=True)
-        info["gpus"] = ["GPU fundet (installer lspci for detaljer)"] if drm else ["Ukendt"]
+        info["gpus"] = ["GPU found (install lspci for details)"] if drm else ["Unknown"]
 
     # WiFi — lspci, fallback til /sys/class/net
     if _cmd_exists("lspci"):
         wifi_raw = _run("lspci | grep -i 'network\\|wireless\\|wifi'", shell=True)
-        info["wifi"] = wifi_raw.splitlines()[0].split(": ", 1)[-1].strip() if wifi_raw else "Ukendt"
+        info["wifi"] = wifi_raw.splitlines()[0].split(": ", 1)[-1].strip() if wifi_raw else "Unknown"
     else:
         # Fallback: kig på netværksinterfaces
         ifaces = _run("ls /sys/class/net/", shell=True).split()
         wifi_iface = next((i for i in ifaces if i.startswith("w")), None)
-        info["wifi"] = f"WiFi interface: {wifi_iface}" if wifi_iface else "Ukendt"
+        info["wifi"] = f"WiFi interface: {wifi_iface}" if wifi_iface else "Unknown"
 
     # Audio — lspci, fallback til /proc/asound
     if _cmd_exists("lspci"):
         audio_raw = _run("lspci | grep -i 'audio\\|sound'", shell=True)
-        info["audio_codec"] = audio_raw.splitlines()[0].split(": ", 1)[-1].strip() if audio_raw else "Ukendt"
+        info["audio_codec"] = audio_raw.splitlines()[0].split(": ", 1)[-1].strip() if audio_raw else "Unknown"
     else:
         asound = _run("cat /proc/asound/cards", shell=True)
-        info["audio_codec"] = asound.splitlines()[0].strip() if asound else "Ukendt"
+        info["audio_codec"] = asound.splitlines()[0].strip() if asound else "Unknown"
 
     # Ethernet — lspci, fallback til /sys/class/net
     if _cmd_exists("lspci"):
@@ -275,7 +275,7 @@ def _cpu_details(cpu_string):
     cpu = cpu_string.lower()
     vendor = "AMD" if "amd" in cpu else "Intel"
 
-    generation = "Ukendt"
+    generation = "Unknown"
     if vendor == "Intel":
         m = re.search(r'i[3579]-(\d{4,5})', cpu)
         if m:
@@ -341,7 +341,7 @@ def _check_compatibility(info):
     elif "broadcom" in wifi or "bcm" in wifi:
         warnings.append("Broadcom WiFi — tjek om kortmodellen er på kompatibilitetslisten")
 
-    compatible = "Nej" if issues else ("Med forbehold" if warnings else "Ja")
+    compatible = "No" if issues else ("With caveats" if warnings else "Yes")
     return {"compatible": compatible, "issues": issues, "warnings": warnings}
 
 
@@ -358,7 +358,7 @@ def scan():
     elif os_name == "Linux":
         raw = _scan_linux()
     else:
-        print("FEJL — ukendt OS")
+        print("ERROR — unknown OS")
         return None
 
     vendor, generation = _cpu_details(raw.get("cpu", ""))
@@ -371,30 +371,55 @@ def scan():
     return raw
 
 
-def print_summary(info):
+def print_summary(info, lang="EN"):
+    _L = {
+        "DA": {
+            "title":    "HARDWARE OVERSIGT",
+            "cores":    "Kerner",
+            "audio":    "Lyd (codec)",
+            "laptop":   "Laptop",
+            "macos_ok": "macOS OK",
+            "yes":      "Ja",
+            "no":       "Nej",
+            "issues":   "PROBLEMER:",
+            "warnings": "ADVARSLER:",
+        },
+        "EN": {
+            "title":    "HARDWARE SUMMARY",
+            "cores":    "Cores",
+            "audio":    "Audio (codec)",
+            "laptop":   "Laptop",
+            "macos_ok": "macOS OK",
+            "yes":      "Yes",
+            "no":       "No",
+            "issues":   "ISSUES:",
+            "warnings": "WARNINGS:",
+        },
+    }
+    l = _L.get(lang, _L["EN"])
     c = info.get("compatibility", {})
     print("\n" + "=" * 52)
-    print("  HARDWARE OVERSIGT")
+    print(f"  {l['title']}")
     print("=" * 52)
     print(f"  CPU         : {info.get('cpu', '?')}")
     print(f"  Generation  : {info.get('cpu_generation', '?')}")
-    print(f"  Kerner      : {info.get('cpu_cores', '?')}")
+    print(f"  {l['cores']:<12}: {info.get('cpu_cores', '?')}")
     print(f"  RAM         : {info.get('ram_gb', '?')} GB")
-    print(f"  GPU(er)     : {', '.join(info.get('gpus', ['?']))}")
+    print(f"  GPU(s)      : {', '.join(info.get('gpus', ['?']))}")
     print(f"  WiFi        : {info.get('wifi', '?')}")
-    print(f"  Lyd (codec) : {info.get('audio_codec', '?')}")
+    print(f"  {l['audio']:<12}: {info.get('audio_codec', '?')}")
     print(f"  Ethernet    : {', '.join(info.get('ethernet', ['?']))}")
-    print(f"  Laptop      : {'Ja' if info.get('is_laptop') else 'Nej'}")
-    print(f"  macOS OK    : {c.get('compatible', '?')}")
+    print(f"  {l['laptop']:<12}: {l['yes'] if info.get('is_laptop') else l['no']}")
+    print(f"  {l['macos_ok']:<12}: {c.get('compatible', '?')}")
 
     if c.get("issues"):
-        print("\n  PROBLEMER:")
+        print(f"\n  {l['issues']}")
         for i in c["issues"]:
-            print(f"    x {i}")
+            print(f"    ✗ {i}")
     if c.get("warnings"):
-        print("\n  ADVARSLER:")
+        print(f"\n  {l['warnings']}")
         for w in c["warnings"]:
-            print(f"    ! {w}")
+            print(f"    ⚠ {w}")
 
     print("=" * 52 + "\n")
 

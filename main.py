@@ -157,7 +157,7 @@ def main():
     if not hw:
         print(t("hw_fail"))
         sys.exit(1)
-    hardware.print_summary(hw)
+    hardware.print_summary(hw, lang=LANG)
 
     if not _confirm_compatibility(hw):
         print(t("exiting"))
