@@ -102,7 +102,11 @@ _T = {
             "  │  ✓ Fast Boot            → Disabled",
             "  │  ✓ OS Type              → Other OS  (eller Windows UEFI)",
         ],
-        "bios_footer": "  └───────────────────────────────────────────────────────────",
+        "bios_footer":        "  └───────────────────────────────────────────────────────────",
+        "update_found":       "  Eksisterende EFI fundet i: {path}",
+        "update_choice":      "    [1] Opdater (ny OpenCore + kexts, bevar config.plist)\n    [2] Fuld build fra bunden",
+        "update_prompt":      "  [1/2]: ",
+        "update_mode":        "  → Kører i opdateringstilstand",
     },
     "EN": {
         "banner":           "  AutoCore — Automated Hackintosh USB Installer",
@@ -151,7 +155,11 @@ _T = {
             "  │  ✓ Fast Boot            → Disabled",
             "  │  ✓ OS Type              → Other OS  (or Windows UEFI)",
         ],
-        "bios_footer": "  └───────────────────────────────────────────────────────────",
+        "bios_footer":        "  └───────────────────────────────────────────────────────────",
+        "update_found":       "  Existing EFI found at: {path}",
+        "update_choice":      "    [1] Update (new OpenCore + kexts, keep config.plist)\n    [2] Full build from scratch",
+        "update_prompt":      "  [1/2]: ",
+        "update_mode":        "  → Running in update mode",
     },
 }
 
@@ -261,6 +269,28 @@ def _print_bios_checklist():
     print()
 
 
+def _ask_build_mode(output_dir):
+    """Hvis eksisterende EFI er fundet, spørg om opdatering eller fuld build."""
+    config_path = os.path.join(output_dir, "EFI", "OC", "config.plist")
+    if not os.path.exists(config_path):
+        return "fresh"
+
+    print()
+    print(t("update_found", path=output_dir))
+    print(t("update_choice"))
+    print()
+    while True:
+        try:
+            val = input(t("update_prompt")).strip()
+            if val == "1":
+                return "update"
+            if val == "2":
+                return "fresh"
+        except (KeyboardInterrupt, EOFError):
+            print(t("aborted"))
+            sys.exit(0)
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -321,6 +351,13 @@ def main():
 
     print()
 
+    # ── Build mode: ny eller opdatering ──────────────────────────────────────
+    build_mode = _ask_build_mode(output_dir)
+    if build_mode == "update":
+        print(t("update_mode"))
+
+    print()
+
     # ── Trin 3 / Step 3: Kexts ───────────────────────────────────────────────
     import kexts
     selected, failed = kexts.select_and_download(hw, macos_version, kexts_dir)
@@ -329,32 +366,45 @@ def main():
 
     print()
 
-    # ── Trin 4 / Step 4: EFI + OpenCore + recovery ───────────────────────────
     import efi_builder
-    build_result = efi_builder.build(macos_version, kexts_dir, output_dir, hardware=hw)
-    if not build_result.get("ok"):
-        print(t("efi_fail"))
-        _stop_log()
-        sys.exit(1)
-
-    print()
-
-    # ── Trin 5 / Step 5: config.plist ────────────────────────────────────────
     import config_plist
-    config_path = config_plist.generate(
-        hw, selected, macos_version, output_dir,
-        ssdts=build_result.get("ssdts", []),
-        opencanopy=build_result.get("opencanopy", False),
-    )
-    if not config_path:
-        print(t("plist_fail"))
-        _stop_log()
-        sys.exit(1)
 
-    config_plist.print_summary(config_path, hw, selected)
+    if build_mode == "update":
+        # ── Opdater tilstand: ny OC + kexts, bevar config.plist ──────────────
+        update_result = efi_builder.update_efi(kexts_dir, output_dir, hardware=hw)
+        if not update_result.get("ok"):
+            print(t("efi_fail"))
+            _stop_log()
+            sys.exit(1)
 
-    # ── OC Validate ──────────────────────────────────────────────────────────
-    efi_builder.run_ocvalidate(build_result.get("ocvalidate"), config_path)
+        config_path = os.path.join(output_dir, "EFI", "OC", "config.plist")
+        efi_builder.run_ocvalidate(update_result.get("ocvalidate"), config_path)
+
+    else:
+        # ── Trin 4 / Step 4: EFI + OpenCore + recovery ───────────────────────
+        build_result = efi_builder.build(macos_version, kexts_dir, output_dir, hardware=hw)
+        if not build_result.get("ok"):
+            print(t("efi_fail"))
+            _stop_log()
+            sys.exit(1)
+
+        print()
+
+        # ── Trin 5 / Step 5: config.plist ────────────────────────────────────
+        config_path = config_plist.generate(
+            hw, selected, macos_version, output_dir,
+            ssdts=build_result.get("ssdts", []),
+            opencanopy=build_result.get("opencanopy", False),
+        )
+        if not config_path:
+            print(t("plist_fail"))
+            _stop_log()
+            sys.exit(1)
+
+        config_plist.print_summary(config_path, hw, selected)
+
+        # ── OC Validate ──────────────────────────────────────────────────────
+        efi_builder.run_ocvalidate(build_result.get("ocvalidate"), config_path)
 
     # ── USB Mapper (macOS only) ───────────────────────────────────────────────
     if platform.system() == "Darwin":

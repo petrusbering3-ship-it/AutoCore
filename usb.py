@@ -285,21 +285,21 @@ def _eject_linux(device, mount_point):
 # ─── Kopi med progress ────────────────────────────────────────────────────────
 
 def _copy_with_progress(src, dst, label):
-    total = sum(len(files) for _, _, files in os.walk(src))
+    import progress
+    total  = sum(len(files) for _, _, files in os.walk(src))
     copied = 0
 
     for root, dirs, files in os.walk(src):
-        rel = os.path.relpath(root, src)
+        rel     = os.path.relpath(root, src)
         dst_dir = os.path.join(dst, rel) if rel != "." else dst
         os.makedirs(dst_dir, exist_ok=True)
 
         for fname in files:
             shutil.copy2(os.path.join(root, fname), os.path.join(dst_dir, fname))
             copied += 1
-            pct = int(copied / total * 100) if total else 100
-            print(f"\r    → {label} {pct}%", end="", flush=True)
+            progress.update(f"→ {label}", copied, total)
 
-    print(f"\r    → {label} ✓        ")
+    progress.done(f"→ {label}")
 
 
 # ─── Public API ───────────────────────────────────────────────────────────────

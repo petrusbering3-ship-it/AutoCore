@@ -10,6 +10,7 @@ import sys
 import shutil
 import zipfile
 import subprocess
+import threading
 import time
 import platform
 
@@ -31,6 +32,8 @@ requests = _ensure_deps()
 # ─── macOS version → recovery board-id ───────────────────────────────────────
 
 RECOVERY_DATA = {
+    "Big Sur":  {"board_id": "Mac-42FD25EABCABB274", "mlb": "00000000000000000", "os_ver": "11"},
+    "Monterey": {"board_id": "Mac-06F11FD93F0323C5", "mlb": "00000000000000000", "os_ver": "12"},
     "Ventura":  {"board_id": "Mac-27AD2F918AE68F61", "mlb": "00000000000000000", "os_ver": "13"},
     "Sonoma":   {"board_id": "Mac-827FAC58A8FDFA22", "mlb": "00000000000000000", "os_ver": "14"},
     "Sequoia":  {"board_id": "Mac-F60DEB81FF30ACF6", "mlb": "00000000000000000", "os_ver": "15"},
@@ -59,27 +62,30 @@ def _get_latest_release(repo):
 
 
 def _download_file(url, dest_path, label=""):
-    """Download med MB/s hastighed og ETA vist i terminalen."""
+    """Download med visuelt progress bar."""
+    import progress
     try:
         r = requests.get(url, stream=True, timeout=60)
         r.raise_for_status()
-        total = int(r.headers.get("content-length", 0))
+        total      = int(r.headers.get("content-length", 0))
         downloaded = 0
-        start = time.time()
+        start      = time.time()
         with open(dest_path, "wb") as f:
             for chunk in r.iter_content(chunk_size=65536):
                 f.write(chunk)
                 downloaded += len(chunk)
                 elapsed = time.time() - start
-                if total and elapsed > 0.5:
-                    pct = int(downloaded / total * 100)
+                if elapsed > 0.3:
                     speed = downloaded / elapsed / (1024 * 1024)
-                    remaining = int((total - downloaded) / (downloaded / elapsed)) if downloaded > 0 else 0
-                    print(f"\r    → {label} {pct}%  {speed:.1f} MB/s  ETA {remaining}s   ", end="", flush=True)
-        print(f"\r    → {label} ✓                                    ")
+                    if total > 0:
+                        eta = int((total - downloaded) / (downloaded / elapsed)) if downloaded > 0 else 0
+                        progress.update(label, downloaded, total, speed_mbps=speed, eta_s=eta)
+                    else:
+                        progress.indeterminate(label, downloaded_bytes=downloaded)
+        progress.done(label)
         return True
     except Exception as e:
-        print(f"\n  ! Download fejlede ({label}): {e}")
+        progress.error(label, str(e))
         return False
 
 
@@ -128,6 +134,9 @@ def _select_ssdts(hardware):
 
         if is_laptop:
             needed.append("SSDT-PNLF.aml")
+
+        if is_laptop and gen >= 5:
+            needed.append("SSDT-XOSI.aml")
 
         # PMC fix for 300-series desktop chipsets (Coffee Lake)
         if not is_laptop and gen in (8, 9):
@@ -273,6 +282,24 @@ def _move_kexts_to_efi(kexts_dir, base_dir):
 
 # ─── Download macOS Recovery ──────────────────────────────────────────────────
 
+def _monitor_download(recovery_dir, stop_event):
+    """Baggrundstråd der viser downloadet filstørrelse mens macrecovery kører."""
+    import progress
+    label = "macOS recovery"
+    while not stop_event.wait(2):
+        total_bytes = 0
+        try:
+            for fname in os.listdir(recovery_dir):
+                try:
+                    total_bytes += os.path.getsize(os.path.join(recovery_dir, fname))
+                except OSError:
+                    pass
+        except OSError:
+            pass
+        if total_bytes > 0:
+            progress.indeterminate(label, downloaded_bytes=total_bytes)
+
+
 def _download_recovery(macos_version, base_dir, tmp_dir, macrecovery_path):
     data = RECOVERY_DATA.get(macos_version)
     if not data:
@@ -285,21 +312,40 @@ def _download_recovery(macos_version, base_dir, tmp_dir, macrecovery_path):
     print(f"  → macOS {macos_version} recovery (dette tager et øjeblik)...")
 
     if macrecovery_path and os.path.exists(macrecovery_path):
-        for cmd_args in [
-            ["download", "-b", data["board_id"], "-m", data["mlb"], "-o", recovery_dir],
-            ["download", "-b", data["board_id"], "-m", data["mlb"]],
-        ]:
-            result = subprocess.run(
-                [sys.executable, macrecovery_path] + cmd_args,
-                capture_output=False,
-                timeout=3600,
-                cwd=recovery_dir,
-            )
-            if result.returncode == 0:
-                files = os.listdir(recovery_dir)
-                if any(f.lower().endswith((".dmg", ".chunklist")) for f in files):
-                    print(f"  ✓ macOS {macos_version} recovery downloadet")
-                    return True
+        stop_event = threading.Event()
+        monitor = threading.Thread(
+            target=_monitor_download, args=(recovery_dir, stop_event), daemon=True
+        )
+        monitor.start()
+        try:
+            for cmd_args in [
+                ["download", "-b", data["board_id"], "-m", data["mlb"], "-o", recovery_dir],
+                ["download", "-b", data["board_id"], "-m", data["mlb"]],
+            ]:
+                result = subprocess.run(
+                    [sys.executable, macrecovery_path] + cmd_args,
+                    capture_output=True,
+                    timeout=3600,
+                    cwd=recovery_dir,
+                )
+                if result.returncode == 0:
+                    files = os.listdir(recovery_dir)
+                    if any(f.lower().endswith((".dmg", ".chunklist")) for f in files):
+                        stop_event.set()
+                        monitor.join(timeout=3)
+                        total_bytes = sum(
+                            os.path.getsize(os.path.join(recovery_dir, f))
+                            for f in files
+                            if os.path.isfile(os.path.join(recovery_dir, f))
+                        )
+                        mb = total_bytes / (1024 * 1024)
+                        import progress
+                        progress.done("macOS recovery", note=f"✓ ({mb:.0f} MB)")
+                        return True
+        finally:
+            stop_event.set()
+            monitor.join(timeout=3)
+            print()
         print(f"  ! macrecovery.py fejlede — prøver direkte download")
 
     return _download_recovery_direct(data, macos_version, recovery_dir)
@@ -452,6 +498,41 @@ def build(macos_version, kexts_dir, output_dir, hardware=None):
 
     print(f"\n  ✓ EFI klar i: {output_dir}")
     print(f"  → Næste: config_plist.py genererer EFI/OC/config.plist\n")
+
+    result["ok"] = True
+    return result
+
+
+# ─── EFI opdatering (bevar config.plist) ─────────────────────────────────────
+
+def update_efi(kexts_dir, output_dir, hardware=None):
+    """
+    Opdater kexts og OpenCore i eksisterende EFI.
+    Berører ikke config.plist, ACPI/ eller recovery.
+    Returnerer dict: {"ok": bool, "ocvalidate": path}
+    """
+    tmp_dir = os.path.join(output_dir, "_tmp")
+    os.makedirs(tmp_dir, exist_ok=True)
+
+    result = {"ok": False, "ocvalidate": None}
+
+    print("\n[4/6] Opdaterer EFI (OpenCore + kexts)...")
+
+    # Download ny OpenCore (erstatter BOOT, OC/Drivers, OC/Tools, OC/Resources)
+    ok, _, ocvalidate_path, _ = _download_opencore(output_dir, tmp_dir)
+    if not ok:
+        print("  ! OpenCore download fejlede")
+        return result
+
+    result["ocvalidate"] = ocvalidate_path
+
+    # Kopier nye kexts til EFI/OC/Kexts/
+    moved = _move_kexts_to_efi(kexts_dir, output_dir)
+    if moved:
+        print(f"  ✓ {len(moved)} kexts opdateret i EFI/OC/Kexts/")
+
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    print("  ✓ EFI opdateret — config.plist uændret\n")
 
     result["ok"] = True
     return result

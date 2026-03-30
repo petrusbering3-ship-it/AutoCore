@@ -221,8 +221,8 @@ KEXT_DB = {
     },
 }
 
-MACOS_VERSIONS = ["Ventura", "Sonoma", "Sequoia"]
-MACOS_ORDER = ["Monterey", "Ventura", "Sonoma", "Sequoia"]
+MACOS_VERSIONS = ["Big Sur", "Monterey", "Ventura", "Sonoma", "Sequoia"]
+MACOS_ORDER = ["Big Sur", "Monterey", "Ventura", "Sonoma", "Sequoia"]
 MACOS_MIN_BLUETOOTH_FIX = ["Monterey", "Ventura", "Sonoma", "Sequoia"]
 
 
@@ -258,21 +258,36 @@ def _get_latest_release(repo, pinned_version=None):
         return None
 
 
-def _download_file_with_retry(url, dest_path, retries=3, delay=2):
-    """Download med op til 3 forsøg og pause mellem hvert."""
+def _download_file_with_retry(url, dest_path, retries=3, delay=2, label=""):
+    """Download med visuelt progress bar og op til 3 forsøg."""
+    import progress
     for attempt in range(retries):
         try:
             r = requests.get(url, stream=True, timeout=30)
             r.raise_for_status()
+            total      = int(r.headers.get("content-length", 0))
+            downloaded = 0
+            start      = time.time()
             with open(dest_path, "wb") as f:
                 for chunk in r.iter_content(chunk_size=8192):
                     f.write(chunk)
+                    downloaded += len(chunk)
+                    elapsed = time.time() - start
+                    if elapsed > 0.3:
+                        speed = downloaded / elapsed / (1024 * 1024)
+                        if total > 0:
+                            eta = int((total - downloaded) / (downloaded / elapsed)) if downloaded > 0 else 0
+                            progress.update(label, downloaded, total, speed_mbps=speed, eta_s=eta)
+                        else:
+                            progress.indeterminate(label, downloaded_bytes=downloaded)
+            progress.done(label)
             return True
         except Exception as e:
             if attempt < retries - 1:
+                progress.error(label, f"forsøg {attempt + 1} fejlede — prøver igen")
                 time.sleep(delay)
             else:
-                print(f"\n    ! Download fejlede efter {retries} forsøg: {e}")
+                progress.error(label, f"download fejlede efter {retries} forsøg: {e}")
     return False
 
 
@@ -373,9 +388,11 @@ ITLWM_MACOS_MAP = {
 }
 
 def _download_airportitlwm(macos_version, dest_dir):
-    print(f"    → AirportItlwm ({macos_version})...", end=" ", flush=True)
+    import progress
+    label = f"→ AirportItlwm ({macos_version})"
     release = _get_latest_release("OpenIntelWireless/itlwm")
     if not release:
+        progress.error(label, "kunne ikke hente release")
         return False
 
     assets = release.get("assets", [])
@@ -384,14 +401,13 @@ def _download_airportitlwm(macos_version, dest_dir):
         target = _find_asset(assets, ["airportitlwm"])
 
     if not target:
-        print(f"FEJL — asset ikke fundet")
+        progress.error(label, "asset ikke fundet")
         return False
 
     zip_path = os.path.join(dest_dir, "airportitlwm.zip")
-    if _download_file_with_retry(target["browser_download_url"], zip_path):
+    if _download_file_with_retry(target["browser_download_url"], zip_path, label=label):
         _extract_kext(zip_path, dest_dir, ["AirportItlwm.kext"])
         os.remove(zip_path)
-        print("✓")
         return True
     return False
 
@@ -434,9 +450,9 @@ def download_kexts(selected_names, hardware, macos_version, dest_dir):
 
     # AirportItlwm håndteres særskilt
     if "AirportItlwm" in selected_names and "intel" in wifi:
-        # Offline: check om kexten allerede eksisterer
+        import progress
         if os.path.isdir(os.path.join(dest_dir, "AirportItlwm.kext")):
-            print(f"    → AirportItlwm ({macos_version})... ✓ (fra cache)")
+            progress.done(f"→ AirportItlwm ({macos_version})", note="✓ (cache)")
         else:
             _download_airportitlwm(macos_version, dest_dir)
         selected_names = [n for n in selected_names if n != "AirportItlwm"]
@@ -463,40 +479,40 @@ def download_kexts(selected_names, hardware, macos_version, dest_dir):
         if not extract:
             continue
 
-        print(f"    → {name}...", end=" ", flush=True)
+        import progress
+        label = f"→ {name}"
 
         # Offline: tjek om kexten allerede er i cache
         kext_file = extract[0] if extract else None
         if kext_file and os.path.isdir(os.path.join(dest_dir, kext_file)):
-            print("✓ (fra cache)")
+            progress.done(label, note="✓ (cache)")
             downloaded_repos.add(repo)
             continue
 
         if repo in downloaded_repos:
-            print("✓ (fra cache)")
+            progress.done(label, note="✓ (cache)")
             continue
 
         release = _get_latest_release(repo)
         if not release:
+            progress.error(label, "kunne ikke hente release")
             failed.append(name)
             continue
 
         assets = release.get("assets", [])
         asset = _find_asset(assets, [".zip"], exclude=["debug", "dsym", "source"])
         if not asset:
-            print("FEJL — ingen ZIP fundet")
+            progress.error(label, "ingen ZIP fundet")
             failed.append(name)
             continue
 
         zip_path = os.path.join(dest_dir, f"{name}.zip")
-        if _download_file_with_retry(asset["browser_download_url"], zip_path):
+        if _download_file_with_retry(asset["browser_download_url"], zip_path, label=label):
             extracted = _extract_kext(zip_path, dest_dir, extract)
             os.remove(zip_path)
             downloaded_repos.add(repo)
-            if extracted:
-                print("✓")
-            else:
-                print("! (filer ikke fundet i ZIP)")
+            if not extracted:
+                progress.error(label, "filer ikke fundet i ZIP")
                 failed.append(name)
         else:
             failed.append(name)

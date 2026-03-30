@@ -504,6 +504,40 @@ def _add_ssdt_entries(config, ssdt_files):
     config.setdefault("ACPI", {})["Add"] = existing
 
 
+def _get_acpi_patches(hardware):
+    """
+    Returnerer liste af ACPI rename patches baseret på hardware.
+
+    _OSI → XOSI: Nødvendig på laptops der bruger SSDT-XOSI til OS-detektering
+    (trackpad, lysstyrke, USB sleep). Ren rename — påvirker ikke desktop systemer.
+    """
+    patches = []
+    is_laptop = hardware.get("is_laptop", False)
+    gen_str = hardware.get("cpu_generation", "")
+    m = re.search(r'(\d+)\. gen', gen_str)
+    gen = int(m.group(1)) if m else 8
+
+    if is_laptop and gen >= 5:
+        patches.append({
+            "Base":           "",
+            "BaseSkip":       0,
+            "Comment":        "_OSI to XOSI",
+            "Count":          0,
+            "Enabled":        True,
+            "Find":           bytes.fromhex("5F4F5349"),
+            "Limit":          0,
+            "Mask":           bytes(4),
+            "OemTableId":     bytes(8),
+            "Replace":        bytes.fromhex("584F5349"),
+            "ReplaceMask":    bytes(4),
+            "Skip":           0,
+            "TableLength":    0,
+            "TableSignature": bytes(4),
+        })
+
+    return patches
+
+
 def _configure_opencanopy(config, opencanopy_available):
     """Aktiver OpenCanopy grafisk picker hvis tilgængeligt."""
     if not opencanopy_available:
@@ -594,6 +628,16 @@ def generate(hardware, selected_kexts, macos_version, efi_dir, sample_path=None,
     # ── ACPI.Add (SSDTs) ─────────────────────────────────────────────────────
     if ssdts:
         _add_ssdt_entries(config, ssdts)
+
+    # ── ACPI.Patch (renames) ──────────────────────────────────────────────────
+    acpi_patches = _get_acpi_patches(hardware)
+    if acpi_patches:
+        existing_patches = config.setdefault("ACPI", {}).setdefault("Patch", [])
+        existing_comments = {p.get("Comment", "") for p in existing_patches}
+        for patch in acpi_patches:
+            if patch["Comment"] not in existing_comments:
+                existing_patches.append(patch)
+        print(f"    ACPI    : {len(acpi_patches)} rename patch(es) tilføjet")
 
     # ── Kernel.Add (kexts i korrekt rækkefølge) ──────────────────────────────
     kexts_dir = os.path.join(efi_dir, "_kexts")
