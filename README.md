@@ -7,6 +7,8 @@
 ### Answer a few questions. Get a bootable Hackintosh USB.
 
 **Supports macOS · Windows · Linux**
+WIP!
+Updates coming soon!
 
 </div>
 
