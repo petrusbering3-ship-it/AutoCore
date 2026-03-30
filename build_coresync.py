@@ -283,7 +283,7 @@ def build(output_dir):
         script_path = os.path.join(macos_dir, "CoreSync")
         with open(script_path, "w") as f:
             f.write(_CORESYNC_SCRIPT)
-        os.chmod(script_path, os.stat(script_path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+        os.chmod(script_path, os.stat(script_path).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
         # Skriv Info.plist
         with open(os.path.join(app_dir, "Contents", "Info.plist"), "w") as f:

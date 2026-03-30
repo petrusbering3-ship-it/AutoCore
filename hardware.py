@@ -108,6 +108,10 @@ def _scan_macos():
     i2c_raw = _run(["ioreg", "-r", "-c", "IOHIDDevice", "-d", "3"])
     info["trackpad_i2c"] = "VoodooI2C" in i2c_raw or "SYNA" in i2c_raw or "ELAN" in i2c_raw
 
+    # VM detection
+    hw_raw = _run(["system_profiler", "SPHardwareDataType"])
+    info["is_vm"] = any(v in hw_raw for v in ["VMware", "VirtualBox", "Parallels", "QEMU", "Xen"])
+
     return info
 
 
@@ -182,12 +186,15 @@ def _scan_windows():
     try:
         info["has_nvme"] = bool(json.loads(nvme_raw))
     except Exception:
-        # Fallback: tjek model navne
         info["has_nvme"] = any("nvme" in d["name"].lower() for d in info.get("storage", []))
 
     # Trackpad type
     i2c_raw = _ps("Get-PnpDevice | Where-Object {$_.FriendlyName -match 'I2C|HID|Precision'} | Select-Object FriendlyName | ConvertTo-Json")
     info["trackpad_i2c"] = bool(i2c_raw and ("I2C" in i2c_raw or "Precision" in i2c_raw))
+
+    # VM detection
+    bios_raw = _ps("(Get-CimInstance Win32_BIOS).Manufacturer")
+    info["is_vm"] = any(v in bios_raw for v in ["VMware", "VirtualBox", "VBOX", "QEMU", "Xen", "Parallels"])
 
     return info
 
@@ -213,7 +220,6 @@ def _scan_linux():
         gpu_raw = _run("lspci | grep -i 'vga\\|display\\|3d'", shell=True)
         info["gpus"] = [l.split(": ", 1)[1].strip() for l in gpu_raw.splitlines() if ": " in l]
     else:
-        # Fallback: læs fra /sys/class/drm
         drm = _run("ls /sys/class/drm/", shell=True)
         info["gpus"] = ["GPU found (install lspci for details)"] if drm else ["Unknown"]
 
@@ -222,7 +228,6 @@ def _scan_linux():
         wifi_raw = _run("lspci | grep -i 'network\\|wireless\\|wifi'", shell=True)
         info["wifi"] = wifi_raw.splitlines()[0].split(": ", 1)[-1].strip() if wifi_raw else "Unknown"
     else:
-        # Fallback: kig på netværksinterfaces
         ifaces = _run("ls /sys/class/net/", shell=True).split()
         wifi_iface = next((i for i in ifaces if i.startswith("w")), None)
         info["wifi"] = f"WiFi interface: {wifi_iface}" if wifi_iface else "Unknown"
@@ -258,13 +263,15 @@ def _scan_linux():
         blocks = _run("ls /sys/block/", shell=True).split()
         info["storage"] = [{"name": b, "ssd": False} for b in blocks if not b.startswith("loop")]
 
-    # NVMe: tjek om /dev/nvme* eksisterer
     info["has_nvme"] = len(glob.glob("/dev/nvme*")) > 0
 
     # Trackpad type: tjek I2C bus for HID enheder
-    i2c_devices = _run("ls /sys/bus/i2c/devices/ 2>/dev/null", shell=True)
     i2c_hid = _run("grep -r 'i2c-hid\\|SYNA\\|ELAN\\|ALPS' /sys/bus/i2c/devices/ 2>/dev/null", shell=True)
     info["trackpad_i2c"] = bool(i2c_hid)
+
+    # VM detection via DMI
+    dmi = _run("cat /sys/class/dmi/id/sys_vendor 2>/dev/null", shell=True)
+    info["is_vm"] = any(v in dmi for v in ["VMware", "VirtualBox", "QEMU", "Xen", "Parallels"])
 
     return info
 
@@ -280,9 +287,6 @@ def _cpu_details(cpu_string):
         m = re.search(r'i[3579]-(\d{4,5})', cpu)
         if m:
             num = m.group(1)
-            # 5-cifret (f.eks. 10900) → første 2 cifre er generation
-            # 4-cifret startende med 10/11/12/13/14 → første 2 cifre
-            # 4-cifret startende med 4-9 → første ciffer
             if len(num) == 5:
                 prefix = num[:2]
             elif num[:2] in ("10", "11", "12", "13", "14"):
@@ -319,20 +323,16 @@ def _check_compatibility(info):
     cpu = info.get("cpu", "").lower()
     gpus = [g.lower() for g in info.get("gpus", [])]
 
-    # NVIDIA GPU — kun støttet til High Sierra
     for g in gpus:
         if "nvidia" in g:
             issues.append("NVIDIA GPU — kun macOS op til High Sierra (10.13)")
 
-    # Intel 12./13./14. gen — kræver ekstra patches
     if re.search(r'i[3579]-1[234]\d{3}', cpu):
         warnings.append("12./13./14. gen Intel — kræver ekstra ACPI/Booter patches")
 
-    # AMD CPU
     if "amd" in cpu and "ryzen" not in cpu:
         issues.append("Ældre AMD CPU — meget begrænset macOS support")
 
-    # WiFi
     wifi = info.get("wifi", "").lower()
     if "realtek" in wifi:
         issues.append("Realtek WiFi — ikke supporteret, kræver USB WiFi eller korterstatning")
@@ -424,7 +424,42 @@ def print_summary(info, lang="EN"):
     print("=" * 52 + "\n")
 
 
+def save_report(info, path=None):
+    """Gem hardware-rapport som tekstfil til skrivebordet."""
+    if path is None:
+        desktop = os.path.expanduser("~/Desktop")
+        path = os.path.join(desktop, "autocore_hardware.txt")
+    try:
+        c = info.get("compatibility", {})
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("AutoCore — Hardware Rapport\n")
+            f.write("=" * 44 + "\n")
+            f.write(f"CPU         : {info.get('cpu', '?')}\n")
+            f.write(f"Generation  : {info.get('cpu_generation', '?')}\n")
+            f.write(f"Kerner      : {info.get('cpu_cores', '?')}\n")
+            f.write(f"RAM         : {info.get('ram_gb', '?')} GB\n")
+            f.write(f"GPU(s)      : {', '.join(info.get('gpus', ['?']))}\n")
+            f.write(f"WiFi        : {info.get('wifi', '?')}\n")
+            f.write(f"Lyd (codec) : {info.get('audio_codec', '?')}\n")
+            f.write(f"Ethernet    : {', '.join(info.get('ethernet', ['?']))}\n")
+            f.write(f"Laptop      : {'Ja' if info.get('is_laptop') else 'Nej'}\n")
+            f.write(f"VM          : {'Ja' if info.get('is_vm') else 'Nej'}\n")
+            f.write(f"macOS OK    : {c.get('compatible', '?')}\n")
+            if c.get("issues"):
+                f.write("\nPROBLEMER:\n")
+                for i in c["issues"]:
+                    f.write(f"  ✗ {i}\n")
+            if c.get("warnings"):
+                f.write("\nADVARSLER:\n")
+                for w in c["warnings"]:
+                    f.write(f"  ⚠ {w}\n")
+        return path
+    except Exception:
+        return None
+
+
 if __name__ == "__main__":
     result = scan()
     if result:
         print_summary(result)
+        save_report(result)

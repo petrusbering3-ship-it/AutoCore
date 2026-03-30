@@ -66,29 +66,96 @@ SMBIOS_TABLE = {
 # ─── iGPU platform IDs ────────────────────────────────────────────────────────
 
 IGPU_PLATFORM_ID = {
-    ("4",  True):  bytes([0x03, 0x00, 0x26, 0x0d]),  # Haswell laptop
-    ("4",  False): bytes([0x03, 0x00, 0x22, 0x0d]),  # Haswell desktop
-    ("5",  True):  bytes([0x06, 0x00, 0x26, 0x16]),  # Broadwell laptop
-    ("5",  False): bytes([0x07, 0x00, 0x22, 0x16]),  # Broadwell desktop
-    ("6",  True):  bytes([0x00, 0x00, 0x16, 0x19]),  # Skylake laptop HD 520
-    ("6",  False): bytes([0x00, 0x00, 0x12, 0x19]),  # Skylake desktop HD 530
-    ("7",  True):  bytes([0x00, 0x00, 0x16, 0x59]),  # Kaby Lake laptop HD 620
-    ("7",  False): bytes([0x03, 0x00, 0x12, 0x59]),  # Kaby Lake desktop HD 630
-    ("8",  True):  bytes([0x09, 0x00, 0xa5, 0x3e]),  # Coffee Lake laptop UHD 620
-    ("8",  False): bytes([0x07, 0x00, 0x9b, 0x3e]),  # Coffee Lake desktop UHD 630
-    ("9",  True):  bytes([0x09, 0x00, 0xa5, 0x3e]),  # Coffee Lake Refresh laptop
-    ("9",  False): bytes([0x07, 0x00, 0x9b, 0x3e]),  # Coffee Lake Refresh desktop
-    ("10", True):  bytes([0x09, 0x00, 0xa5, 0x3e]),  # Comet Lake laptop
-    ("10", False): bytes([0x07, 0x00, 0x9b, 0x3e]),  # Comet Lake desktop
-    ("11", True):  bytes([0x02, 0x00, 0x9a, 0x8a]),  # Tiger Lake laptop Iris Xe
-    ("11", False): bytes([0x03, 0x00, 0xc8, 0x9b]),  # Rocket Lake desktop
-    ("12", True):  bytes([0x02, 0x00, 0xfb, 0x89]),  # Alder Lake laptop
-    ("12", False): bytes([0x00, 0x00, 0x6e, 0x9a]),  # Alder Lake desktop
-    ("13", True):  bytes([0x02, 0x00, 0xfb, 0x89]),  # Raptor Lake laptop
-    ("13", False): bytes([0x00, 0x00, 0x6e, 0x9a]),  # Raptor Lake desktop
-    ("14", True):  bytes([0x02, 0x00, 0xfb, 0x89]),  # Raptor Lake Refresh laptop
-    ("14", False): bytes([0x00, 0x00, 0x6e, 0x9a]),  # Raptor Lake Refresh desktop
+    ("4",  True):  bytes([0x03, 0x00, 0x26, 0x0d]),
+    ("4",  False): bytes([0x03, 0x00, 0x22, 0x0d]),
+    ("5",  True):  bytes([0x06, 0x00, 0x26, 0x16]),
+    ("5",  False): bytes([0x07, 0x00, 0x22, 0x16]),
+    ("6",  True):  bytes([0x00, 0x00, 0x16, 0x19]),
+    ("6",  False): bytes([0x00, 0x00, 0x12, 0x19]),
+    ("7",  True):  bytes([0x00, 0x00, 0x16, 0x59]),
+    ("7",  False): bytes([0x03, 0x00, 0x12, 0x59]),
+    ("8",  True):  bytes([0x09, 0x00, 0xa5, 0x3e]),
+    ("8",  False): bytes([0x07, 0x00, 0x9b, 0x3e]),
+    ("9",  True):  bytes([0x09, 0x00, 0xa5, 0x3e]),
+    ("9",  False): bytes([0x07, 0x00, 0x9b, 0x3e]),
+    ("10", True):  bytes([0x09, 0x00, 0xa5, 0x3e]),
+    ("10", False): bytes([0x07, 0x00, 0x9b, 0x3e]),
+    ("11", True):  bytes([0x02, 0x00, 0x9a, 0x8a]),
+    ("11", False): bytes([0x03, 0x00, 0xc8, 0x9b]),
+    ("12", True):  bytes([0x02, 0x00, 0xfb, 0x89]),
+    ("12", False): bytes([0x00, 0x00, 0x6e, 0x9a]),
+    ("13", True):  bytes([0x02, 0x00, 0xfb, 0x89]),
+    ("13", False): bytes([0x00, 0x00, 0x6e, 0x9a]),
+    ("14", True):  bytes([0x02, 0x00, 0xfb, 0x89]),
+    ("14", False): bytes([0x00, 0x00, 0x6e, 0x9a]),
 }
+
+# ─── Audio codec → AppleALC layout ID ────────────────────────────────────────
+# Nøgle: IOHDACodecVendorID som heltal (decimal fra ioreg)
+# Værdi: (codec-navn, anbefalet layout-id)
+
+CODEC_LAYOUT_MAP = {
+    # Realtek ALC (0x10EC = vendor)
+    0x10EC0221: ("ALC221",  11),
+    0x10EC0225: ("ALC225",  28),
+    0x10EC0230: ("ALC230",   3),
+    0x10EC0233: ("ALC233",   3),
+    0x10EC0235: ("ALC235",  11),
+    0x10EC0245: ("ALC245",  15),
+    0x10EC0255: ("ALC255",  66),
+    0x10EC0256: ("ALC256",  69),
+    0x10EC0257: ("ALC257",  11),
+    0x10EC0269: ("ALC269",   1),
+    0x10EC0270: ("ALC270",  15),
+    0x10EC0272: ("ALC272",   3),
+    0x10EC0274: ("ALC274",  21),
+    0x10EC0280: ("ALC280",  14),
+    0x10EC0282: ("ALC282",   3),
+    0x10EC0283: ("ALC283",  11),
+    0x10EC0285: ("ALC285",  71),
+    0x10EC0286: ("ALC286",   3),
+    0x10EC0289: ("ALC289",  87),
+    0x10EC0290: ("ALC290",   3),
+    0x10EC0292: ("ALC292",  12),
+    0x10EC0293: ("ALC293",   3),   # Brugerens codec
+    0x10EC0295: ("ALC295",  15),
+    0x10EC0298: ("ALC298",  28),
+    0x10EC0299: ("ALC299",  72),
+    0x10EC0300: ("ALC300",  99),
+    0x10EC0623: ("ALC623",  13),
+    0x10EC0671: ("ALC671",  11),
+    0x10EC0700: ("ALC700",  75),
+    0x10EC0892: ("ALC892",   1),
+    0x10EC0897: ("ALC897",  13),
+    0x10EC1150: ("ALC1150",  1),
+    0x10EC1220: ("ALC1220",  1),
+    # IDT
+    0x111D76D1: ("IDT92HD71",  3),
+    0x111D7605: ("IDT92HD75B", 3),
+    # Conexant
+    0x14F15069: ("CX20585",  3),
+    0x14F15098: ("CX20598",  3),
+    # VIA
+    0x1106E721: ("VT1802",   3),
+}
+
+
+def _get_audio_layout(audio_codec_str):
+    """Konverter IOHDACodecVendorID streng til AppleALC layout-id."""
+    try:
+        codec_id = int(audio_codec_str)
+        entry = CODEC_LAYOUT_MAP.get(codec_id)
+        if entry:
+            return entry[0], entry[1]
+        # Prøv at matche kun de øverste 24 bits (vendor + device, uden revision)
+        masked = codec_id & 0xFFFFFF00
+        for key, val in CODEC_LAYOUT_MAP.items():
+            if (key & 0xFFFFFF00) == masked:
+                return val[0], val[1]
+    except (ValueError, TypeError):
+        pass
+    return "Unknown", 1  # Fallback layout-id 1
+
 
 # ─── Kext metadata ────────────────────────────────────────────────────────────
 
@@ -119,6 +186,7 @@ KEXT_META = {
     "SMCBatteryManager":      ("SMCBatteryManager.kext",      "Contents/MacOS/SMCBatteryManager",      "", ""),
     "BrightnessKeys":         ("BrightnessKeys.kext",         "Contents/MacOS/BrightnessKeys",         "", ""),
     "USBToolBox":             ("USBToolBox.kext",             "Contents/MacOS/USBToolBox",             "", ""),
+    "UTBMap":                 ("UTBMap.kext",                 "",                                      "", ""),
 }
 
 KEXT_ORDER = [
@@ -130,7 +198,7 @@ KEXT_ORDER = [
     "BrcmPatchRAM3", "BrcmFirmwareData", "BrcmBluetoothInjector",
     "VoodooPS2Controller", "VoodooI2C", "VoodooI2CHID",
     "ECEnabler", "SMCBatteryManager", "BrightnessKeys",
-    "USBToolBox",
+    "USBToolBox", "UTBMap",
 ]
 
 KEXT_EXPAND = {
@@ -145,13 +213,11 @@ KEXT_EXPAND = {
 
 _MACSERIAL_REPO = "acidanthera/macserial"
 
-# Keyword til at finde det rigtige asset i release
 _MACSERIAL_ASSET_KEY = {
     "Darwin":  "mac",
     "Windows": "win",
 }
 
-# Model → 4-char serienummer suffix (fra macserial's model database)
 _SERIAL_SUFFIXES = {
     "MacBookPro11,4": "DRJM",
     "MacBookPro12,1": "DV35",
@@ -171,35 +237,26 @@ _SERIAL_SUFFIXES = {
     "MacPro7,1":      "LKCH",
 }
 
-# Gyldige tegn i Apple serienumre (ingen I, O for at undgå forveksling)
 _SERIAL_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ0123456789"
-
-# Halvår-bogstaver for 2019–2022 (S/T=2019, V/W=2020, X/Y=2021, Z/C=2022)
 _YEAR_CHARS = "STVWXYZ"
 
 
 def _download_macserial(tools_dir):
-    """
-    Downloader macserial fra acidanthera/macserial releases.
-    Returnerer stien til binary, eller None (Linux / fejl) → Python-fallback.
-    Gemmer binary til genbrug ved efterfølgende kørsler.
-    """
     import zipfile, io
 
     os_name = platform.system()
     asset_key = _MACSERIAL_ASSET_KEY.get(os_name)
     if not asset_key:
-        return None  # Linux: ingen pre-bygget binary
+        return None
 
     os.makedirs(tools_dir, exist_ok=True)
     fname = "macserial.exe" if os_name == "Windows" else "macserial"
     dest = os.path.join(tools_dir, fname)
 
     if os.path.exists(dest) and os.path.getsize(dest) > 10_000:
-        return dest  # Brug cached version
+        return dest
 
     try:
-        # Hent seneste release
         api_url = f"https://api.github.com/repos/{_MACSERIAL_REPO}/releases/latest"
         r = requests.get(api_url, timeout=10, headers={"Accept": "application/vnd.github+json"})
         r.raise_for_status()
@@ -209,12 +266,10 @@ def _download_macserial(tools_dir):
         if not asset:
             return None
 
-        # Download og udpak zip
         r2 = requests.get(asset["browser_download_url"], timeout=30)
         r2.raise_for_status()
 
         with zipfile.ZipFile(io.BytesIO(r2.content)) as z:
-            # Find binary i zip (macserial eller macserial.exe)
             binary_entry = next((e for e in z.namelist() if e == fname or e.endswith("/" + fname)), None)
             if not binary_entry:
                 return None
@@ -231,17 +286,11 @@ def _download_macserial(tools_dir):
 
 
 def _run_macserial(binary, model):
-    """
-    Kører: macserial -n 1 -m <model>
-    Output format: '  ModelName | SerialNumber | MLB'
-    Returnerer (serial, mlb) eller (None, None) ved fejl.
-    """
     try:
         result = subprocess.run(
             [binary, "-n", "1", "-m", model],
             capture_output=True, text=True, timeout=10
         )
-        # Output format: 'Serial | MLB'
         for line in result.stdout.splitlines():
             parts = [p.strip() for p in line.split("|")]
             if len(parts) >= 2 and len(parts[0]) == 12:
@@ -252,42 +301,24 @@ def _run_macserial(binary, model):
 
 
 def _generate_serial_fallback(model):
-    """
-    Python-fallback til Linux og når macserial ikke kan køres.
-    Genererer et korrekt formateret (men ikke Apple-registreret) serienummer.
-
-    Format: LL + Y + W + UUU + MMMM = 12 tegn
-      LL   = fabrikskode (C02)
-      Y    = halvår-bogstav
-      W    = ugebogstav (1-9, A-T)
-      UUU  = unik produktionsnummer (3 tegn)
-      MMMM = model-suffix (4 tegn)
-    """
     factory = "C02"
     year    = random.choice(_YEAR_CHARS)
     week    = random.choice("123456789ABCDEFGHJKLMNPQRST")
     unique  = "".join(random.choices(_SERIAL_CHARS, k=3))
     suffix  = _SERIAL_SUFFIXES.get(model, "XXXX")
 
-    serial = factory + year + week + unique + suffix  # 12 tegn
+    serial = factory + year + week + unique + suffix
 
-    # MLB: 17 tegn — C02 + Y + W + 9 tilfældige + suffix[:3]
     mlb_pad = "".join(random.choices(_SERIAL_CHARS, k=9))
-    mlb = factory + year + week + mlb_pad + suffix[:3]  # 17 tegn
+    mlb = factory + year + week + mlb_pad + suffix[:3]
 
     return serial, mlb
 
 
 def _get_rom_bytes():
-    """
-    Returnerer 6-byte ROM (MAC-adresse).
-    Forsøger at bruge systemets rigtige MAC; falder tilbage til tilfældig lokal-admin adresse.
-    """
     node = _uuid_mod.getnode()
-    # uuid.getnode() sætter multicast-bit hvis den ikke kan finde en rigtig MAC
     if node & (1 << 40):
         rom = bytes([random.randint(0, 255) for _ in range(6)])
-        # Sæt locally administered bit, ryd multicast bit
         rom = bytes([rom[0] & 0xFE | 0x02]) + rom[1:]
     else:
         rom = node.to_bytes(6, "big")
@@ -295,12 +326,6 @@ def _get_rom_bytes():
 
 
 def _generate_platform_info(smbios_model, tools_dir):
-    """
-    Genererer komplet Platform Info til OpenCore.
-    Bruger macserial hvis tilgængeligt, ellers Python-fallback.
-
-    Returnerer dict med: serial, mlb, system_uuid, rom, used_macserial
-    """
     binary = _download_macserial(tools_dir)
 
     if binary:
@@ -390,8 +415,13 @@ def _expand_kexts(selected_names):
     return expanded
 
 
-def _build_kext_entries(selected_names):
+def _build_kext_entries(selected_names, kexts_dir=None):
     expanded = set(_expand_kexts(selected_names))
+
+    # Tilføj UTBMap hvis den eksisterer i kexts_dir
+    if kexts_dir and os.path.isdir(os.path.join(kexts_dir, "UTBMap.kext")):
+        expanded.add("UTBMap")
+
     entries = []
     for name in KEXT_ORDER:
         if name not in expanded:
@@ -416,6 +446,7 @@ def _build_kext_entries(selected_names):
 def _get_kernel_quirks(hardware):
     gen = _get_gen_prefix(hardware)
     vendor = hardware.get("cpu_vendor", "Intel")
+    gen_num = int(gen) if gen.isdigit() else 8
     quirks = {}
 
     if vendor == "AMD":
@@ -424,7 +455,12 @@ def _get_kernel_quirks(hardware):
         quirks["DisableIoMapper"] = True
         return quirks
 
-    gen_num = int(gen) if gen.isdigit() else 8
+    # Intel defaults — safe for most systems
+    quirks["AppleXcpmCfgLock"] = True      # Workaround for CFG Lock (disable if unlocked in BIOS)
+    quirks["DisableIoMapper"] = True        # Disable VT-d (safer default)
+    quirks["ReleaseUsbOwnership"] = True    # Needed for EHCI/XHCI handoff
+    quirks["XhciPortLimit"] = False         # Deprecated on macOS 11.3+ — use USB map instead
+
     if gen_num >= 12:
         quirks["ProvideCurrentCpuInfo"] = True
     if gen_num <= 4:
@@ -433,7 +469,7 @@ def _get_kernel_quirks(hardware):
     return quirks
 
 
-def _get_boot_args(hardware):
+def _get_boot_args(hardware, audio_layout=None):
     args = ["-v", "keepsyms=1", "debug=0x100"]
     gen = _get_gen_prefix(hardware)
     gen_num = int(gen) if gen.isdigit() else 8
@@ -445,24 +481,73 @@ def _get_boot_args(hardware):
     if any("nvidia" in g or "gtx" in g or "rtx" in g for g in gpus):
         args.append("-wegnoegpu")
 
+    # Audio layout-id fra codec-detektion
+    layout = audio_layout if audio_layout else 1
+    args.append(f"alcid={layout}")
+
     return " ".join(args)
+
+
+def _add_ssdt_entries(config, ssdt_files):
+    """Tilføj SSDT-entries til ACPI.Add sektionen."""
+    if not ssdt_files:
+        return
+    existing = config.get("ACPI", {}).get("Add", [])
+    existing_paths = {e.get("Path", "") for e in existing}
+    for ssdt in ssdt_files:
+        if ssdt not in existing_paths:
+            existing.append({
+                "Comment": "",
+                "Enabled": True,
+                "Path": ssdt,
+            })
+    config.setdefault("ACPI", {})["Add"] = existing
+
+
+def _configure_opencanopy(config, opencanopy_available):
+    """Aktiver OpenCanopy grafisk picker hvis tilgængeligt."""
+    if not opencanopy_available:
+        return
+    try:
+        config.setdefault("Misc", {}).setdefault("Boot", {})["PickerMode"] = "External"
+        config["Misc"]["Boot"]["ShowPicker"] = True
+    except Exception:
+        pass
+
+
+def _ensure_opencanopy_driver(config):
+    """Sørg for at OpenCanopy.efi er i UEFI.Drivers listen."""
+    try:
+        drivers = config.setdefault("UEFI", {}).setdefault("Drivers", [])
+        paths = {d.get("Path", "") if isinstance(d, dict) else d for d in drivers}
+        if "OpenCanopy.efi" not in paths:
+            drivers.append({
+                "Arguments": "",
+                "Comment":   "",
+                "Enabled":   True,
+                "LoadEarly": False,
+                "Path":      "OpenCanopy.efi",
+            })
+    except Exception:
+        pass
 
 
 # ─── Hoved-funktion ───────────────────────────────────────────────────────────
 
-def generate(hardware, selected_kexts, macos_version, efi_dir, sample_path=None):
+def generate(hardware, selected_kexts, macos_version, efi_dir, sample_path=None,
+             ssdts=None, opencanopy=False):
     """
-    Genererer EFI/OC/config.plist ved at modificere sample.plist.
+    Genererer EFI/OC/config.plist.
 
     hardware       : dict fra hardware.py scan()
     selected_kexts : liste af kext-navne fra kexts.py select_kexts()
     macos_version  : "Ventura" / "Sonoma" / "Sequoia"
-    efi_dir        : rod-mappe for EFI (config.plist lægges i efi_dir/EFI/OC/)
-    sample_path    : sti til sample.plist (default: samme mappe som dette script)
+    efi_dir        : rod-mappe for EFI
+    ssdts          : liste af SSDT-filnavne der er kopieret (fra efi_builder)
+    opencanopy     : True hvis OpenCanopy.efi er tilgængeligt
     """
     print("[5/6] Genererer config.plist...")
 
-    # ── Indlæs sample.plist ──────────────────────────────────────────────────
     sample = sample_path or DEFAULT_SAMPLE
     if not os.path.exists(sample):
         print(f"  FEJL — sample.plist ikke fundet: {sample}")
@@ -475,7 +560,7 @@ def generate(hardware, selected_kexts, macos_version, efi_dir, sample_path=None)
     smbios_model = _get_smbios(hardware)
     config["PlatformInfo"]["Generic"]["SystemProductName"] = smbios_model
 
-    # ── Platform Info (serial, MLB, UUID, ROM) ───────────────────────────────
+    # ── Platform Info ────────────────────────────────────────────────────────
     tools_dir = os.path.join(efi_dir, "_tools")
     print(f"  → Platform Info ({smbios_model})...", end=" ", flush=True)
 
@@ -492,21 +577,42 @@ def generate(hardware, selected_kexts, macos_version, efi_dir, sample_path=None)
     print(f"    MLB    : {pi['mlb']}")
     print(f"    UUID   : {pi['system_uuid']}")
 
+    # ── Audio layout-id ──────────────────────────────────────────────────────
+    codec_str = hardware.get("audio_codec", "Unknown")
+    codec_name, audio_layout = _get_audio_layout(codec_str)
+    if codec_name != "Unknown":
+        print(f"    Audio  : {codec_name} → alcid={audio_layout}")
+    else:
+        print(f"    Audio  : codec {codec_str} — bruger alcid=1 (standard fallback)")
+
     # ── DeviceProperties (iGPU) ──────────────────────────────────────────────
     igpu_props = _get_igpu_platform_id(hardware)
     if igpu_props:
-        config["DeviceProperties"]["Add"]["PciRoot(0x0)/Pci(0x2,0x0)"] = igpu_props
+        config.setdefault("DeviceProperties", {}).setdefault("Add", {}) \
+            ["PciRoot(0x0)/Pci(0x2,0x0)"] = igpu_props
+
+    # ── ACPI.Add (SSDTs) ─────────────────────────────────────────────────────
+    if ssdts:
+        _add_ssdt_entries(config, ssdts)
 
     # ── Kernel.Add (kexts i korrekt rækkefølge) ──────────────────────────────
-    config["Kernel"]["Add"] = _build_kext_entries(selected_kexts)
+    kexts_dir = os.path.join(efi_dir, "_kexts")
+    config.setdefault("Kernel", {})["Add"] = _build_kext_entries(selected_kexts, kexts_dir)
 
     # ── Kernel.Quirks ────────────────────────────────────────────────────────
+    quirks = config.setdefault("Kernel", {}).setdefault("Quirks", {})
     for key, val in _get_kernel_quirks(hardware).items():
-        config["Kernel"]["Quirks"][key] = val
+        quirks[key] = val
 
     # ── Boot args ────────────────────────────────────────────────────────────
-    config["NVRAM"]["Add"]["7C436110-AB2A-4BBB-A880-FE41995C9F82"]["boot-args"] = \
-        _get_boot_args(hardware)
+    _nvram_key = "7C436110-AB2A-4BBB-A880-FE41995C9F82"
+    config.setdefault("NVRAM", {}).setdefault("Add", {}).setdefault(_nvram_key, {})["boot-args"] = \
+        _get_boot_args(hardware, audio_layout)
+
+    # ── OpenCanopy ───────────────────────────────────────────────────────────
+    if opencanopy:
+        _configure_opencanopy(config, opencanopy)
+        _ensure_opencanopy_driver(config)
 
     # ── Skriv config.plist ───────────────────────────────────────────────────
     out_dir = os.path.join(efi_dir, "EFI", "OC")
@@ -538,12 +644,9 @@ def _print_warnings(hardware, smbios_model, used_macserial):
         print("  │")
 
     if gen_num >= 12:
-        print("  │  Tilføj SSDT-PLUG-ALT.aml til EFI/OC/ACPI/ og ACPI → Add")
+        print("  │  SSDTs: SSDT-PLUG-ALT + SSDT-EC-USBX tilføjet automatisk")
     elif gen_num >= 6:
-        print("  │  Tilføj SSDT-PLUG.aml + SSDT-EC.aml til EFI/OC/ACPI/ og ACPI → Add")
-
-    if hardware.get("is_laptop"):
-        print("  │  Laptop: Tilføj SSDT-PNLF.aml for backlight-kontrol")
+        print("  │  SSDTs: SSDT-EC-USBX + SSDT-PNLF tilføjet (tjek EFI/OC/ACPI/)")
 
     print("  │")
     print("  │  Tjek Apple dækning for din serial (bør vise 'ugyldig'):")
@@ -567,6 +670,7 @@ def print_summary(config_path, hardware, selected_kexts):
         "7C436110-AB2A-4BBB-A880-FE41995C9F82", {}
     ).get("boot-args", "")
     dp    = config.get("DeviceProperties", {}).get("Add", {})
+    acpi  = config.get("ACPI", {}).get("Add", [])
 
     serial = pi.get("SystemSerialNumber", "?")
     serial_display = serial[:3] + "XXXXXXX" + serial[-2:] if len(serial) == 12 else serial
@@ -580,6 +684,8 @@ def print_summary(config_path, hardware, selected_kexts):
     print(f"  UUID        : {pi.get('SystemUUID', '?')[:8]}...")
     print(f"  Boot args   : {args}")
     print(f"  Kexts       : {len(kexts)}")
+    if acpi:
+        print(f"  SSDTs       : {', '.join(e.get('Path','') for e in acpi)}")
     if dp:
         print(f"  DevProps    : {', '.join(dp.keys())}")
     print(f"  Sti         : {config_path}")
@@ -599,6 +705,7 @@ if __name__ == "__main__":
         "wifi": "Intel (itlwm)",
         "ethernet": ["Intel I219V"],
         "trackpad_i2c": True,
+        "audio_codec": "283902611",
     }
     test_kexts = [
         "Lilu", "VirtualSMC", "WhateverGreen", "AppleALC", "RestrictEvents",
@@ -606,6 +713,7 @@ if __name__ == "__main__":
         "VoodooPS2Controller", "VoodooI2C", "ECEnabler", "SMCBatteryManager",
         "BrightnessKeys", "USBToolBox",
     ]
-    out = generate(test_hw, test_kexts, "Sonoma", "/tmp/autocore_test")
+    out = generate(test_hw, test_kexts, "Sonoma", "/tmp/autocore_test",
+                   ssdts=["SSDT-EC-USBX-LAPTOP.aml", "SSDT-PNLF.aml"])
     if out:
         print_summary(out, test_hw, test_kexts)
