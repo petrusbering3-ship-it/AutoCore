@@ -8,7 +8,7 @@
 
 **Supports macOS · Windows · Linux**
 
-**v1.2** — A lot of bugs fixed. `--dry-run` added to test without flashing anything.
+**v1.2**
 
 </div>
 
@@ -181,30 +181,6 @@ Find it on the USB or on your Desktop after install.
 | **RealtekCardReaderFriend** | Makes card reader appear native |
 | **AsusSMC** | ASUS fan, backlight, battery (ASUS laptops) |
 | **YogaSMC** | Lenovo fan, backlight, battery (Lenovo laptops) |
-
-<br>
-
----
-
-## What's new in v1.2
-
-A lot of bugs fixed. Here's the short version:
-
-- **`--dry-run`** — Scan your hardware and see exactly what kexts would be selected, without downloading or touching a USB. Use this to test before committing.
-- **`--export-efi`** — Build the full EFI folder to `~/Desktop/AutoCore_EFI` instead of flashing to USB.
-- **`--version`** — Prints version and exits.
-- **24 new kexts** added to the database: Atheros, Killer E2200, RTL8125, itlwm, IntelBTPatcher, VoodooRMI, VoodooSMBus, AlpsHID, RadeonSensor, SMCRadeonGPU, CpuTscSync, AmdTscSync, RTCMemoryFixup, FeatureUnlock, CryptexFixup, NoTouchID, GenericUSBXHCI, RealtekCardReader, AMDRyzenCPUPowerManagement, SMCAMDProcessor, AsusSMC, YogaSMC, and more.
-- **Trackpad vendor detection** — AutoCore now detects Synaptics / Alps / ELAN and picks the right kext automatically.
-- **System vendor detection** — Detects ASUS / Lenovo / Dell / HP and loads vendor-specific kexts.
-- **All UI strings translated** — No more hardcoded Danish anywhere. Everything goes through `lang.py`.
-- **`XhciPortLimit` fix** — Now correctly `True` for Big Sur and below, `False` for Monterey+.
-- **`-wegnoegpu` fix** — No longer added on laptops where it would break iGPU display output.
-- **AirportItlwm filename fix** — "Big Sur" now correctly matches "BigSur" in the GitHub asset name.
-- **Download cache fix** — Kexts from shared repos (e.g. VirtualSMC sub-kexts) now all extract correctly.
-- **`NEXT_STEPS.md`** written to USB root after flash — BIOS checklist tailored to your hardware generation.
-- **Hardware JSON** saved to `~/Desktop/AutoCore_hardware.json` after scan — easy to share when asking for help.
-- **Internet check** at startup with option to continue offline using cached kexts.
-- **Auto-install** of `requests` and `rich` on first run.
 
 <br>
 
