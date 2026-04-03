@@ -1,6 +1,6 @@
 """
 AutoCore — kexts.py
-Vælger, downloader og klargør alle kexts + USB mapping baseret på hardware.
+Selects, downloads and prepares all kexts based on hardware.
 """
 
 import sys
@@ -13,232 +13,295 @@ import zipfile
 import shutil
 import time
 
-# ─── Auto-installer manglende Python pakker ───────────────────────────────────
-
-def _ensure_deps():
-    try:
-        import requests
-        return requests
-    except ImportError:
-        print("  [AutoCore] Installerer manglende pakke: requests...", end=" ", flush=True)
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", "requests", "--quiet"],
-            check=True
-        )
-        print("✓")
-        import requests
-        return requests
+from lang import t
+from constants import MACOS_VERSIONS, MACOS_ORDER
+from utils import _ensure_deps
 
 requests = _ensure_deps()
 
-
 # ─── Version pins ─────────────────────────────────────────────────────────────
-# Lås kexts til en bestemt version. Format: "KextNavn": "v1.6.7"
-# Lad tomt for altid-seneste.
 VERSION_PINS = {
     # "Lilu": "v1.6.7",
-    # "WhateverGreen": "v1.6.6",
 }
 
-
-# ─── Kext database ────────────────────────────────────────────────────────────
-# Format: navn → { repo, always, description, extract, macos_max }
-# always=True  → altid med
-# always=False → vælges baseret på hardware
-# extract      → liste af .kext navne der skal udpakkes fra ZIP
-# macos_max    → højeste macOS version kexten virker på (None = alle)
-
-KEXT_DB = {
-    # ── Fundament (altid) ──────────────────────────────────────────────────
-    "Lilu": {
-        "repo": "acidanthera/Lilu",
-        "always": True,
-        "description": "Krævet af næsten alle andre kexts",
-        "extract": ["Lilu.kext"],
-        "macos_max": None,
-    },
-    "VirtualSMC": {
-        "repo": "acidanthera/VirtualSMC",
-        "always": True,
-        "description": "SMC emulering — krævet for at macOS starter",
-        "extract": ["VirtualSMC.kext", "SMCProcessor.kext", "SMCSuperIO.kext"],
-        "macos_max": None,
-    },
-    "WhateverGreen": {
-        "repo": "acidanthera/WhateverGreen",
-        "always": True,
-        "description": "GPU patches, iGPU framebuffer, HDMI/DP fix",
-        "extract": ["WhateverGreen.kext"],
-        "macos_max": None,
-    },
-    "AppleALC": {
-        "repo": "acidanthera/AppleALC",
-        "always": True,
-        "description": "Lyd — headphones, mikrofon, HDMI audio",
-        "extract": ["AppleALC.kext"],
-        "macos_max": None,
-    },
-    "NVMeFix": {
-        "repo": "acidanthera/NVMeFix",
-        "always": False,
-        "description": "NVMe strømstyring og kompatibilitet",
-        "extract": ["NVMeFix.kext"],
-        "match": {"has_nvme": True},
-        "macos_max": None,
-    },
-    "RestrictEvents": {
-        "repo": "acidanthera/RestrictEvents",
-        "always": True,
-        "description": "CPU navn i Om denne Mac + RAM advarsler",
-        "extract": ["RestrictEvents.kext"],
-        "macos_max": None,
-    },
-
-    # ── USB (altid) ───────────────────────────────────────────────────────
-    "USBToolBox": {
-        "repo": "USBToolBox/Tool",
-        "always": True,
-        "description": "USB controller mapping (auto-discovery ved første boot)",
-        "extract": ["USBToolBox.kext"],
-        "usb": True,
-        "macos_max": None,
-    },
-
-    # ── Ethernet ──────────────────────────────────────────────────────────
-    "IntelMausi": {
-        "repo": "acidanthera/IntelMausi",
-        "always": False,
-        "description": "Intel I211/I219/I218 ethernet",
-        "extract": ["IntelMausi.kext"],
-        "match": {"ethernet": ["intel"]},
-        "macos_max": None,
-    },
-    "RealtekRTL8111": {
-        "repo": "Mieze/RTL8111_driver_for_OS_X",
-        "always": False,
-        "description": "Realtek RTL8111/8168 ethernet",
-        "extract": ["RealtekRTL8111.kext"],
-        "match": {"ethernet": ["realtek", "rtl"]},
-        "macos_max": None,
-    },
-
-    # ── WiFi ──────────────────────────────────────────────────────────────
-    "AirportItlwm": {
-        "repo": "OpenIntelWireless/itlwm",
-        "always": False,
-        "description": "Intel WiFi — native Airport UI + AirDrop support",
-        "extract": None,  # Håndteres særskilt (macOS-version specifik)
-        "match": {"wifi": ["intel"]},
-        "wifi_vendor": "intel",
-        "macos_max": None,
-    },
-    "AirportBrcmFixup": {
-        "repo": "acidanthera/AirportBrcmFixup",
-        "always": False,
-        "description": "Broadcom WiFi — AirDrop, Handoff, AirPlay support",
-        "extract": ["AirportBrcmFixup.kext"],
-        "match": {"wifi": ["broadcom", "bcm"]},
-        "wifi_vendor": "broadcom",
-        "macos_max": None,
-    },
-
-    # ── Bluetooth ─────────────────────────────────────────────────────────
-    "IntelBluetoothFirmware": {
-        "repo": "OpenIntelWireless/IntelBluetoothFirmware",
-        "always": False,
-        "description": "Intel Bluetooth — Handoff, AirDrop (delvist), Continuity",
-        "extract": ["IntelBluetoothFirmware.kext", "IntelBTPatcher.kext"],
-        "match": {"wifi": ["intel"]},
-        "macos_max": None,
-    },
-    "BlueToolFixup": {
-        "repo": "acidanthera/BrcmPatchRAM",
-        "always": False,
-        "description": "Bluetooth fix til macOS 12+ (Monterey og nyere)",
-        "extract": ["BlueToolFixup.kext"],
-        "match": {"wifi": ["intel", "broadcom", "bcm"]},
-        "macos_min": "Monterey",
-        "macos_max": None,
-    },
-    "BrcmPatchRAM": {
-        "repo": "acidanthera/BrcmPatchRAM",
-        "always": False,
-        "description": "Broadcom Bluetooth firmware loader",
-        "extract": ["BrcmPatchRAM3.kext", "BrcmFirmwareData.kext", "BrcmBluetoothInjector.kext"],
-        "match": {"wifi": ["broadcom", "bcm"]},
-        "macos_max": None,
-    },
-
-    # ── Laptop specifik ───────────────────────────────────────────────────
-    "VoodooPS2": {
-        "repo": "acidanthera/VoodooPS2",
-        "always": False,
-        "description": "Tastatur (næsten alle laptop tastaturer bruger PS/2 internt)",
-        "extract": ["VoodooPS2Controller.kext"],
-        "laptop_only": True,
-        "macos_max": None,
-    },
-    "VoodooI2C": {
-        "repo": "VoodooI2C/VoodooI2C",
-        "always": False,
-        "description": "I2C trackpad — bruges sammen med VoodooPS2 på moderne laptops",
-        "extract": ["VoodooI2C.kext", "VoodooI2CHID.kext"],
-        "laptop_only": True,
-        "match": {"trackpad_i2c": True},
-        "macos_max": None,
-    },
-    "ECEnabler": {
-        "repo": "1Revenger1/ECEnabler",
-        "always": False,
-        "description": "Batteri status og Embedded Controller fix",
-        "extract": ["ECEnabler.kext"],
-        "laptop_only": True,
-        "macos_max": None,
-    },
-    "SMCBatteryManager": {
-        "repo": "acidanthera/VirtualSMC",
-        "always": False,
-        "description": "Batteri procent og status i menulinjen",
-        "extract": ["SMCBatteryManager.kext"],
-        "laptop_only": True,
-        "macos_max": None,
-    },
-    "BrightnessKeys": {
-        "repo": "acidanthera/BrightnessKeys",
-        "always": False,
-        "description": "Lysstyrke-taster (Fn+F5/F6) på laptop",
-        "extract": ["BrightnessKeys.kext"],
-        "laptop_only": True,
-        "macos_max": None,
-    },
-    "CPUFriend": {
-        "repo": "acidanthera/CPUFriend",
-        "always": False,
-        "description": "CPU strømstyring og frekvens",
-        "extract": ["CPUFriend.kext"],
-        "laptop_only": True,
-        "macos_max": None,
-    },
-}
-
-MACOS_VERSIONS = ["Big Sur", "Monterey", "Ventura", "Sonoma", "Sequoia"]
-MACOS_ORDER = ["Big Sur", "Monterey", "Ventura", "Sonoma", "Sequoia"]
 MACOS_MIN_BLUETOOTH_FIX = ["Monterey", "Ventura", "Sonoma", "Sequoia"]
 
+# ─── Kext database ────────────────────────────────────────────────────────────
+KEXT_DB = {
+    # ── Foundation (always) ──────────────────────────────────────────────
+    "Lilu": {
+        "repo": "acidanthera/Lilu", "always": True,
+        "description": "Required by almost all other kexts",
+        "extract": ["Lilu.kext"], "macos_max": None,
+    },
+    "VirtualSMC": {
+        "repo": "acidanthera/VirtualSMC", "always": True,
+        "description": "SMC emulation — required for macOS to boot",
+        "extract": ["VirtualSMC.kext", "SMCProcessor.kext", "SMCSuperIO.kext"], "macos_max": None,
+    },
+    "WhateverGreen": {
+        "repo": "acidanthera/WhateverGreen", "always": True,
+        "description": "GPU patches, iGPU framebuffer, HDMI/DP fix",
+        "extract": ["WhateverGreen.kext"], "macos_max": None,
+    },
+    "AppleALC": {
+        "repo": "acidanthera/AppleALC", "always": True,
+        "description": "Audio — headphones, microphone, HDMI audio",
+        "extract": ["AppleALC.kext"], "macos_max": None,
+    },
+    "RestrictEvents": {
+        "repo": "acidanthera/RestrictEvents", "always": True,
+        "description": "CPU name in About This Mac + RAM warnings",
+        "extract": ["RestrictEvents.kext"], "macos_max": None,
+    },
+    "NVMeFix": {
+        "repo": "acidanthera/NVMeFix", "always": False,
+        "description": "NVMe power management and compatibility",
+        "extract": ["NVMeFix.kext"], "match": {"has_nvme": True}, "macos_max": None,
+    },
+    # ── USB (always) ─────────────────────────────────────────────────────
+    "USBToolBox": {
+        "repo": "USBToolBox/Tool", "always": True,
+        "description": "USB controller mapping",
+        "extract": ["USBToolBox.kext"], "macos_max": None,
+    },
+    # ── Ethernet ─────────────────────────────────────────────────────────
+    "IntelMausi": {
+        "repo": "acidanthera/IntelMausi", "always": False,
+        "description": "Intel I211/I219/I218 ethernet",
+        "extract": ["IntelMausi.kext"], "match": {"ethernet": ["intel"]}, "macos_max": None,
+    },
+    "RealtekRTL8111": {
+        "repo": "Mieze/RTL8111_driver_for_OS_X", "always": False,
+        "description": "Realtek RTL8111/8168 ethernet",
+        "extract": ["RealtekRTL8111.kext"], "match": {"ethernet": ["realtek", "rtl"]}, "macos_max": None,
+    },
+    "AtherosE2200Ethernet": {
+        "repo": "Mieze/AtherosE2200Ethernet", "always": False,
+        "description": "Atheros/Killer E2200/E2400/E2500 ethernet",
+        "extract": ["AtherosE2200Ethernet.kext"],
+        "match": {"ethernet": ["atheros", "killer e2200", "qualcomm"]}, "macos_max": None,
+    },
+    "LucyRTL8125Ethernet": {
+        "repo": "Mieze/LucyRTL8125Ethernet", "always": False,
+        "description": "Realtek RTL8125 2.5GbE ethernet",
+        "extract": ["LucyRTL8125Ethernet.kext"],
+        "match": {"ethernet": ["rtl8125", "realtek 2.5g"]}, "macos_max": None,
+    },
+    "AppleIGB": {
+        "repo": "donatengit/AppleIGB", "always": False,
+        "description": "Intel I210/I211/I350 server-grade ethernet",
+        "extract": ["AppleIGB.kext"],
+        "match": {"ethernet": ["i210", "i211", "i350"]}, "macos_max": None,
+    },
+    # ── WiFi ─────────────────────────────────────────────────────────────
+    "AirportItlwm": {
+        "repo": "OpenIntelWireless/itlwm", "always": False,
+        "description": "Intel WiFi — native Airport UI + AirDrop support",
+        "extract": None, "match": {"wifi": ["intel"]}, "macos_max": None,
+    },
+    "itlwm": {
+        "repo": "OpenIntelWireless/itlwm", "always": False,
+        "description": "Intel WiFi alternative — more stable, no AirDrop",
+        "extract": ["itlwm.kext"], "match": {"wifi": ["intel"]}, "macos_max": None,
+    },
+    "AirportBrcmFixup": {
+        "repo": "acidanthera/AirportBrcmFixup", "always": False,
+        "description": "Broadcom WiFi — AirDrop, Handoff, AirPlay support",
+        "extract": ["AirportBrcmFixup.kext"],
+        "match": {"wifi": ["broadcom", "bcm"]}, "macos_max": None,
+    },
+    # ── Bluetooth ────────────────────────────────────────────────────────
+    "IntelBluetoothFirmware": {
+        "repo": "OpenIntelWireless/IntelBluetoothFirmware", "always": False,
+        "description": "Intel Bluetooth — Handoff, Continuity",
+        "extract": ["IntelBluetoothFirmware.kext"],
+        "match": {"wifi": ["intel"]}, "macos_max": None,
+    },
+    "IntelBTPatcher": {
+        "repo": "OpenIntelWireless/IntelBluetoothFirmware", "always": False,
+        "description": "Intel Bluetooth patcher required alongside IntelBluetoothFirmware",
+        "extract": ["IntelBTPatcher.kext"],
+        "match": {"wifi": ["intel"]}, "macos_max": None,
+    },
+    "BlueToolFixup": {
+        "repo": "acidanthera/BrcmPatchRAM", "always": False,
+        "description": "Bluetooth fix for macOS 12+ (Monterey and newer)",
+        "extract": ["BlueToolFixup.kext"],
+        "match": {"wifi": ["intel", "broadcom", "bcm"]},
+        "macos_min": "Monterey", "macos_max": None,
+    },
+    "BrcmPatchRAM": {
+        "repo": "acidanthera/BrcmPatchRAM", "always": False,
+        "description": "Broadcom Bluetooth firmware loader",
+        "extract": ["BrcmPatchRAM3.kext", "BrcmFirmwareData.kext", "BrcmBluetoothInjector.kext"],
+        "match": {"wifi": ["broadcom", "bcm"]}, "macos_max": None,
+    },
+    # ── Trackpad / Input ─────────────────────────────────────────────────
+    "VoodooPS2": {
+        "repo": "acidanthera/VoodooPS2", "always": False,
+        "description": "Keyboard (most laptop keyboards use PS/2 internally)",
+        "extract": ["VoodooPS2Controller.kext"], "laptop_only": True, "macos_max": None,
+    },
+    "VoodooI2C": {
+        "repo": "VoodooI2C/VoodooI2C", "always": False,
+        "description": "I2C trackpad — used with VoodooPS2 on modern laptops",
+        "extract": ["VoodooI2C.kext", "VoodooI2CHID.kext"],
+        "laptop_only": True, "match": {"trackpad_i2c": True}, "macos_max": None,
+    },
+    "VoodooRMI": {
+        "repo": "VoodooSMBus/VoodooRMI", "always": False,
+        "description": "Synaptics trackpad via RMI — smoother than PS2",
+        "extract": ["VoodooRMI.kext"],
+        "laptop_only": True, "match": {"trackpad_vendor": "synaptics"}, "macos_max": None,
+    },
+    "VoodooSMBus": {
+        "repo": "VoodooSMBus/VoodooSMBus", "always": False,
+        "description": "SMBUS controller driver required by VoodooRMI",
+        "extract": ["VoodooSMBus.kext"],
+        "laptop_only": True, "match": {"trackpad_vendor": "synaptics"}, "macos_max": None,
+    },
+    "AlpsHID": {
+        "repo": "blankmac/AlpsHID", "always": False,
+        "description": "Alps trackpad support via HID protocol",
+        "extract": ["AlpsHID.kext"],
+        "laptop_only": True, "match": {"trackpad_vendor": "alps"}, "macos_max": None,
+    },
+    # ── Laptop specific ───────────────────────────────────────────────────
+    "ECEnabler": {
+        "repo": "1Revenger1/ECEnabler", "always": False,
+        "description": "Battery status and Embedded Controller fix",
+        "extract": ["ECEnabler.kext"], "laptop_only": True, "macos_max": None,
+    },
+    "SMCBatteryManager": {
+        "repo": "acidanthera/VirtualSMC", "always": False,
+        "description": "Battery percentage and status in menu bar",
+        "extract": ["SMCBatteryManager.kext"], "laptop_only": True, "macos_max": None,
+    },
+    "BrightnessKeys": {
+        "repo": "acidanthera/BrightnessKeys", "always": False,
+        "description": "Brightness keys (Fn+F5/F6) on laptop",
+        "extract": ["BrightnessKeys.kext"], "laptop_only": True, "macos_max": None,
+    },
+    "CPUFriend": {
+        "repo": "acidanthera/CPUFriend", "always": False,
+        "description": "CPU power management and frequency",
+        "extract": ["CPUFriend.kext"], "laptop_only": True, "macos_max": None,
+    },
+    "HibernationFixup": {
+        "repo": "acidanthera/HibernationFixup", "always": False,
+        "description": "Fixes hibernation and sleep/wake issues on laptops",
+        "extract": ["HibernationFixup.kext"], "laptop_only": True, "macos_max": None,
+    },
+    "NoTouchID": {
+        "repo": "al3xtjames/NoTouchID", "always": False,
+        "description": "Disables TouchID prompt that causes login hangs",
+        "extract": ["NoTouchID.kext"],
+        "laptop_only": True, "match": {"cpu_gen_min": 6}, "macos_max": None,
+    },
+    # ── GPU / Display ─────────────────────────────────────────────────────
+    "RadeonSensor": {
+        "repo": "aluveitie/RadeonSensor", "always": False,
+        "description": "AMD GPU temperature monitoring",
+        "extract": ["RadeonSensor.kext"],
+        "match": {"gpu": ["amd", "radeon", "rx "]}, "macos_max": None,
+    },
+    "SMCRadeonGPU": {
+        "repo": "aluveitie/RadeonSensor", "always": False,
+        "description": "Exposes AMD GPU temps to VirtualSMC sensors",
+        "extract": ["SMCRadeonGPU.kext"],
+        "match": {"gpu": ["amd", "radeon", "rx "]}, "macos_max": None,
+    },
+    # ── CPU / Power ───────────────────────────────────────────────────────
+    "CpuTscSync": {
+        "repo": "acidanthera/CpuTscSync", "always": False,
+        "description": "TSC sync fix for Intel desktop CPUs — prevents random freezes",
+        "extract": ["CpuTscSync.kext"],
+        "desktop_only": True, "match": {"cpu_vendor": "Intel"}, "macos_max": None,
+    },
+    "AmdTscSync": {
+        "repo": "naveenkrdy/AmdTscSync", "always": False,
+        "description": "TSC sync fix for AMD CPUs",
+        "extract": ["AmdTscSync.kext"],
+        "match": {"cpu_vendor": "AMD"}, "macos_max": None,
+    },
+    "AMDRyzenCPUPowerManagement": {
+        "repo": "trulyspinach/SMCAMDProcessor", "always": False,
+        "description": "AMD CPU power management and frequency scaling",
+        "extract": ["AMDRyzenCPUPowerManagement.kext"],
+        "match": {"cpu_vendor": "AMD"}, "macos_max": None,
+    },
+    "SMCAMDProcessor": {
+        "repo": "trulyspinach/SMCAMDProcessor", "always": False,
+        "description": "Exposes AMD CPU temps and frequency to VirtualSMC",
+        "extract": ["SMCAMDProcessor.kext"],
+        "match": {"cpu_vendor": "AMD"}, "macos_max": None,
+    },
+    # ── Stability / Fixes ─────────────────────────────────────────────────
+    "RTCMemoryFixup": {
+        "repo": "acidanthera/RTCMemoryFixup", "always": False,
+        "description": "Fixes RTC memory issues that cause BIOS reset on reboot",
+        "extract": ["RTCMemoryFixup.kext"],
+        "match": {"cpu_vendor": "Intel", "cpu_gen_min": 6}, "macos_max": None,
+    },
+    "FeatureUnlock": {
+        "repo": "acidanthera/FeatureUnlock", "always": False,
+        "description": "Unlocks AirPlay to Mac, Sidecar, Universal Control on unsupported hardware",
+        "extract": ["FeatureUnlock.kext"],
+        "macos_min": "Monterey", "macos_max": None,
+    },
+    "CryptexFixup": {
+        "repo": "acidanthera/CryptexFixup", "always": False,
+        "description": "Required for Ventura+ on older CPUs — fixes cryptex mounting errors",
+        "extract": ["CryptexFixup.kext"],
+        "macos_min": "Ventura", "match": {"cpu_vendor": "Intel", "cpu_gen_max": 10}, "macos_max": None,
+    },
+    # ── USB ───────────────────────────────────────────────────────────────
+    "GenericUSBXHCI": {
+        "repo": "RattletraPM/GenericUSBXHCI", "always": False,
+        "description": "Generic XHCI driver for non-Intel USB controllers",
+        "extract": ["GenericUSBXHCI.kext"],
+        "match": {"cpu_vendor": "AMD"}, "macos_max": None,
+    },
+    # ── Card Readers ──────────────────────────────────────────────────────
+    "RealtekCardReader": {
+        "repo": "0xFireWolf/RealtekCardReader", "always": False,
+        "description": "Realtek PCIe/USB SD card reader driver",
+        "extract": ["RealtekCardReader.kext"],
+        "laptop_only": True, "match": {"card_reader": True}, "macos_max": None,
+    },
+    "RealtekCardReaderFriend": {
+        "repo": "0xFireWolf/RealtekCardReaderFriend", "always": False,
+        "description": "Makes Realtek card reader appear as native Apple SD reader",
+        "extract": ["RealtekCardReaderFriend.kext"],
+        "laptop_only": True, "match": {"card_reader": True}, "macos_max": None,
+    },
+    # ── Laptop vendor specific ────────────────────────────────────────────
+    "AsusSMC": {
+        "repo": "hieplpvip/AsusSMC", "always": False,
+        "description": "ASUS laptop keyboard backlight, fan control, battery health",
+        "extract": ["AsusSMC.kext"],
+        "laptop_only": True, "match": {"system_vendor": ["asus"]}, "macos_max": None,
+    },
+    "YogaSMC": {
+        "repo": "zhen-zen/YogaSMC", "always": False,
+        "description": "Lenovo ThinkPad/IdeaPad fan control, keyboard backlight, battery",
+        "extract": ["YogaSMC.kext"],
+        "laptop_only": True, "match": {"system_vendor": ["lenovo"]}, "macos_max": None,
+    },
+}
 
-# ─── GitHub release downloader med retry ─────────────────────────────────────
+
+# ─── GitHub release downloader ────────────────────────────────────────────────
 
 def _get_latest_release(repo, pinned_version=None):
-    """Hent release info. Bruger pinned_version hvis sat i VERSION_PINS."""
     pin = pinned_version or VERSION_PINS.get(repo.split("/")[-1])
-
     if pin:
         url = f"https://api.github.com/repos/{repo}/releases/tags/{pin}"
         try:
             r = requests.get(url, timeout=10, headers={"Accept": "application/vnd.github+json"})
             if r.status_code == 200:
                 return r.json()
-            # Tag not found — fall through to latest
         except Exception:
             pass
 
@@ -254,13 +317,12 @@ def _get_latest_release(repo, pinned_version=None):
         r.raise_for_status()
         return r.json()
     except Exception as e:
-        print(f"\n    ! Kunne ikke hente release fra {repo}: {e}")
+        print(f"\n    ! Could not fetch release from {repo}: {e}")
         return None
 
 
 def _download_file_with_retry(url, dest_path, retries=3, delay=2, label=""):
-    """Download med visuelt progress bar og op til 3 forsøg."""
-    import progress
+    """Download with progress output and up to 3 retries."""
     for attempt in range(retries):
         try:
             r = requests.get(url, stream=True, timeout=30)
@@ -273,26 +335,23 @@ def _download_file_with_retry(url, dest_path, retries=3, delay=2, label=""):
                     f.write(chunk)
                     downloaded += len(chunk)
                     elapsed = time.time() - start
-                    if elapsed > 0.3:
-                        speed = downloaded / elapsed / (1024 * 1024)
-                        if total > 0:
-                            eta = int((total - downloaded) / (downloaded / elapsed)) if downloaded > 0 else 0
-                            progress.update(label, downloaded, total, speed_mbps=speed, eta_s=eta)
-                        else:
-                            progress.indeterminate(label, downloaded_bytes=downloaded)
-            progress.done(label)
+                    if elapsed > 0.5 and total > 0:
+                        pct = int(downloaded / total * 100)
+                        mb  = downloaded / (1024 * 1024)
+                        print(f"\r  {label:<30} {pct:3d}%  {mb:.1f} MB", end="", flush=True)
+            mb_total = downloaded / (1024 * 1024)
+            print(f"\r  {label:<30} ✓  {mb_total:.1f} MB")
             return True
         except Exception as e:
             if attempt < retries - 1:
-                progress.error(label, f"forsøg {attempt + 1} fejlede — prøver igen")
+                print(f"\n  ! {label} attempt {attempt + 1} failed — retrying...")
                 time.sleep(delay)
             else:
-                progress.error(label, f"download fejlede efter {retries} forsøg: {e}")
+                print(f"\n  ! {label} download failed after {retries} attempts: {e}")
     return False
 
 
 def _find_asset(assets, keywords, exclude=None):
-    """Find det bedste asset fra en release baseret på keywords"""
     exclude = exclude or []
     for asset in assets:
         name = asset["name"].lower()
@@ -303,70 +362,92 @@ def _find_asset(assets, keywords, exclude=None):
     return None
 
 
-# ─── macOS-kompatibilitetstjek per kext ──────────────────────────────────────
+# ─── kext compatibility check ─────────────────────────────────────────────────
 
 def _check_kext_compat(name, macos_version):
-    """Returner True hvis kexten er kompatibel med den valgte macOS-version."""
     info = KEXT_DB.get(name, {})
     macos_max = info.get("macos_max")
     if macos_max and macos_max in MACOS_ORDER and macos_version in MACOS_ORDER:
-        max_idx = MACOS_ORDER.index(macos_max)
-        cur_idx = MACOS_ORDER.index(macos_version)
-        if cur_idx > max_idx:
-            return False, f"{name} understøtter ikke {macos_version} (max: {macos_max})"
+        if MACOS_ORDER.index(macos_version) > MACOS_ORDER.index(macos_max):
+            return False, f"{name} {t('kext_no_support')} {macos_version} (max: {macos_max})"
     return True, None
 
 
-# ─── Kext valg baseret på hardware ───────────────────────────────────────────
+# ─── kext selection ───────────────────────────────────────────────────────────
 
 def select_kexts(hardware, macos_version):
-    """Returnerer liste af kext-navne der skal bruges baseret på faktisk hardware"""
     selected = []
-    wifi = hardware.get("wifi", "").lower()
-    ethernet = ", ".join(hardware.get("ethernet", [])).lower()
-    is_laptop = hardware.get("is_laptop", False)
-    has_nvme = hardware.get("has_nvme", False)
-    trackpad_i2c = hardware.get("trackpad_i2c", None)
-    needs_bt_fix = macos_version in MACOS_MIN_BLUETOOTH_FIX
+    wifi          = hardware.get("wifi", "").lower()
+    ethernet      = ", ".join(hardware.get("ethernet", [])).lower()
+    is_laptop     = hardware.get("is_laptop", False)
+    has_nvme      = hardware.get("has_nvme", False)
+    trackpad_i2c  = hardware.get("trackpad_i2c", None)
+    trackpad_v    = hardware.get("trackpad_vendor", "unknown")
+    cpu_vendor    = hardware.get("cpu_vendor", "Intel")
+    system_vendor = hardware.get("system_vendor", "").lower()
+    gpus          = " ".join(g.lower() for g in hardware.get("gpus", []))
+    has_card      = hardware.get("has_card_reader", False)
+
+    gen_str = hardware.get("cpu_generation", "")
+    import re as _re
+    _m = _re.search(r'(\d+)\. gen', gen_str)
+    gen_num = int(_m.group(1)) if _m else 8
+
+    macos_idx = MACOS_ORDER.index(macos_version) if macos_version in MACOS_ORDER else 0
 
     for name, info in KEXT_DB.items():
+        # Always-include kexts
         if info.get("always"):
             selected.append(name)
             continue
 
+        # Laptop/desktop filters
         if info.get("laptop_only") and not is_laptop:
             continue
-
-        if info.get("macos_min") and not needs_bt_fix:
+        if info.get("desktop_only") and is_laptop:
             continue
 
+        # macOS version range check
+        if info.get("macos_min"):
+            min_v = info["macos_min"]
+            if min_v in MACOS_ORDER and macos_idx < MACOS_ORDER.index(min_v):
+                continue
+        if info.get("macos_max"):
+            max_v = info["macos_max"]
+            if max_v in MACOS_ORDER and macos_idx > MACOS_ORDER.index(max_v):
+                continue
+
         match = info.get("match", {})
-        matched = True
 
-        if "wifi" in match:
-            matched = matched and any(kw in wifi for kw in match["wifi"])
-        if "ethernet" in match:
-            matched = matched and any(kw in ethernet for kw in match["ethernet"])
-        if "has_nvme" in match:
-            matched = matched and (has_nvme == match["has_nvme"])
-        if "trackpad_i2c" in match:
-            if trackpad_i2c is None:
-                matched = True
-            else:
-                matched = matched and (trackpad_i2c == match["trackpad_i2c"])
+        # No match dict: select if passes all preliminary filters
+        if not match:
+            selected.append(name)
+            continue
 
-        if not match and info.get("laptop_only") and is_laptop:
-            matched = True
-        elif not match:
-            matched = False
+        # Evaluate match conditions (all must pass)
+        ok = True
+        if "wifi"          in match: ok = ok and any(kw in wifi     for kw in match["wifi"])
+        if "ethernet"      in match: ok = ok and any(kw in ethernet for kw in match["ethernet"])
+        if "has_nvme"      in match: ok = ok and (has_nvme == match["has_nvme"])
+        if "trackpad_i2c"  in match:
+            if trackpad_i2c is not None:
+                ok = ok and (trackpad_i2c == match["trackpad_i2c"])
+        if "trackpad_vendor" in match: ok = ok and (trackpad_v    == match["trackpad_vendor"])
+        if "gpu"           in match: ok = ok and any(kw in gpus    for kw in match["gpu"])
+        if "cpu_vendor"    in match: ok = ok and (cpu_vendor       == match["cpu_vendor"])
+        if "cpu_gen_min"   in match: ok = ok and (gen_num          >= match["cpu_gen_min"])
+        if "cpu_gen_max"   in match: ok = ok and (gen_num          <= match["cpu_gen_max"])
+        if "system_vendor" in match: ok = ok and any(kw in system_vendor for kw in match["system_vendor"])
+        if "card_reader"   in match: ok = ok and has_card
 
-        if matched:
+        if ok:
             selected.append(name)
 
+    # Always add SMCBatteryManager for laptops
     if is_laptop and "SMCBatteryManager" not in selected:
         selected.append("SMCBatteryManager")
 
-    # Tjek kompatibilitet og vis advarsler
+    # Drop incompatible kexts
     incompatible = []
     for name in selected[:]:
         ok, msg = _check_kext_compat(name, macos_version)
@@ -379,29 +460,23 @@ def select_kexts(hardware, macos_version):
     return selected
 
 
-# ─── AirportItlwm — macOS-version specifik ───────────────────────────────────
-
-ITLWM_MACOS_MAP = {
-    "Ventura":  "AirportItlwm_v2.3.0_stable_Ventura.kext.zip",
-    "Sonoma":   "AirportItlwm_v2.3.0_stable_Sonoma.kext.zip",
-    "Sequoia":  "AirportItlwm_v2.3.0_stable_Sequoia.kext.zip",
-}
+# ─── AirportItlwm special downloader ──────────────────────────────────────────
 
 def _download_airportitlwm(macos_version, dest_dir):
-    import progress
-    label = f"→ AirportItlwm ({macos_version})"
+    label = f"AirportItlwm ({macos_version})"
     release = _get_latest_release("OpenIntelWireless/itlwm")
     if not release:
-        progress.error(label, "kunne ikke hente release")
+        print(f"  ! Could not fetch release for AirportItlwm")
         return False
 
     assets = release.get("assets", [])
-    target = _find_asset(assets, ["airportitlwm", macos_version.lower()], exclude=["itlwm_v"])
+    # Fix: strip spaces so "Big Sur" -> "bigsur" to match "BigSur" in filename
+    ver_key = macos_version.lower().replace(" ", "")
+    target = _find_asset(assets, ["airportitlwm", ver_key], exclude=["itlwm_v"])
     if not target:
-        target = _find_asset(assets, ["airportitlwm"])
-
+        target = _find_asset(assets, ["airportitlwm"], exclude=["itlwm_v"])
     if not target:
-        progress.error(label, "asset ikke fundet")
+        print(f"  ! AirportItlwm asset not found for {macos_version}")
         return False
 
     zip_path = os.path.join(dest_dir, "airportitlwm.zip")
@@ -412,10 +487,30 @@ def _download_airportitlwm(macos_version, dest_dir):
     return False
 
 
-# ─── Udpak kexts fra ZIP ─────────────────────────────────────────────────────
+def _download_itlwm(dest_dir):
+    label = "itlwm"
+    release = _get_latest_release("OpenIntelWireless/itlwm")
+    if not release:
+        print(f"  ! Could not fetch release for itlwm")
+        return False
+
+    assets = release.get("assets", [])
+    target = _find_asset(assets, ["itlwm_v", ".zip"])
+    if not target:
+        print("  ! itlwm asset not found")
+        return False
+
+    zip_path = os.path.join(dest_dir, "itlwm.zip")
+    if _download_file_with_retry(target["browser_download_url"], zip_path, label=label):
+        _extract_kext(zip_path, dest_dir, ["itlwm.kext"])
+        os.remove(zip_path)
+        return True
+    return False
+
+
+# ─── Extract kexts from ZIP ───────────────────────────────────────────────────
 
 def _extract_kext(zip_path, dest_dir, kext_names):
-    """Udpak specifikke .kext mapper fra en ZIP fil"""
     extracted = []
     try:
         with zipfile.ZipFile(zip_path, 'r') as z:
@@ -436,137 +531,140 @@ def _extract_kext(zip_path, dest_dir, kext_names):
                             shutil.copyfileobj(src, dst)
                 extracted.append(kext_name)
     except Exception as e:
-        print(f"\n    ! Udpak fejlede for {zip_path}: {e}")
+        print(f"\n    ! Extract failed for {zip_path}: {e}")
     return extracted
 
 
-# ─── Download alle valgte kexts ───────────────────────────────────────────────
+# ─── Download all selected kexts ──────────────────────────────────────────────
 
 def download_kexts(selected_names, hardware, macos_version, dest_dir):
-    """Download og udpak alle valgte kexts til dest_dir"""
     os.makedirs(dest_dir, exist_ok=True)
-    wifi = hardware.get("wifi", "").lower()
+    wifi   = hardware.get("wifi", "").lower()
     failed = []
 
-    # AirportItlwm håndteres særskilt
+    # AirportItlwm — special per-macOS-version download
     if "AirportItlwm" in selected_names and "intel" in wifi:
-        import progress
-        if os.path.isdir(os.path.join(dest_dir, "AirportItlwm.kext")):
-            progress.done(f"→ AirportItlwm ({macos_version})", note="✓ (cache)")
+        cached = os.path.isdir(os.path.join(dest_dir, "AirportItlwm.kext"))
+        if cached:
+            print(f"  AirportItlwm ({macos_version})              ✓ (cache)")
         else:
-            _download_airportitlwm(macos_version, dest_dir)
+            if not _download_airportitlwm(macos_version, dest_dir):
+                failed.append("AirportItlwm")
         selected_names = [n for n in selected_names if n != "AirportItlwm"]
 
-    # Grupér kexts der deler samme repo (undgå dobbelt download)
+    # itlwm — special download (different asset from same repo as AirportItlwm)
+    if "itlwm" in selected_names and "intel" in wifi:
+        cached = os.path.isdir(os.path.join(dest_dir, "itlwm.kext"))
+        if cached:
+            print(f"  itlwm                                  ✓ (cache)")
+        else:
+            if not _download_itlwm(dest_dir):
+                failed.append("itlwm")
+        selected_names = [n for n in selected_names if n != "itlwm"]
+
+    # Group remaining kexts by repo, collecting all extract lists per repo
     repo_groups = {}
     for name in selected_names:
         if name not in KEXT_DB:
             continue
-        repo = KEXT_DB[name]["repo"]
-        if repo not in repo_groups:
-            repo_groups[repo] = []
-        repo_groups[repo].append(name)
-
-    downloaded_repos = set()
-
-    for name in selected_names:
-        if name not in KEXT_DB:
-            continue
-        info = KEXT_DB[name]
-        repo = info["repo"]
-        extract = info.get("extract", [])
-
+        info    = KEXT_DB[name]
+        repo    = info["repo"]
+        extract = info.get("extract") or []
         if not extract:
             continue
+        if repo not in repo_groups:
+            repo_groups[repo] = {"names": [], "extracts": []}
+        repo_groups[repo]["names"].append(name)
+        for kext in extract:
+            if kext not in repo_groups[repo]["extracts"]:
+                repo_groups[repo]["extracts"].append(kext)
 
-        import progress
-        label = f"→ {name}"
+    for repo, data in repo_groups.items():
+        names    = data["names"]
+        extracts = data["extracts"]
+        label    = names[0] if len(names) == 1 else f"{names[0]}+{len(names)-1}"
 
-        # Offline: tjek om kexten allerede er i cache
-        kext_file = extract[0] if extract else None
-        if kext_file and os.path.isdir(os.path.join(dest_dir, kext_file)):
-            progress.done(label, note="✓ (cache)")
-            downloaded_repos.add(repo)
-            continue
-
-        if repo in downloaded_repos:
-            progress.done(label, note="✓ (cache)")
+        # Cache check: all kexts for this repo already present?
+        all_cached = all(
+            os.path.isdir(os.path.join(dest_dir, kx))
+            for kx in extracts
+        )
+        if all_cached:
+            for n in names:
+                print(f"  {n:<38} ✓ (cache)")
             continue
 
         release = _get_latest_release(repo)
         if not release:
-            progress.error(label, "kunne ikke hente release")
-            failed.append(name)
+            print(f"  ! Could not fetch release from {repo}")
+            failed.extend(names)
             continue
 
         assets = release.get("assets", [])
-        asset = _find_asset(assets, [".zip"], exclude=["debug", "dsym", "source"])
+        asset  = _find_asset(assets, [".zip"], exclude=["debug", "dsym", "source"])
         if not asset:
-            progress.error(label, "ingen ZIP fundet")
-            failed.append(name)
+            print(f"  ! No ZIP found for {repo}")
+            failed.extend(names)
             continue
 
-        zip_path = os.path.join(dest_dir, f"{name}.zip")
+        zip_path = os.path.join(dest_dir, f"{repo.replace('/', '_')}.zip")
         if _download_file_with_retry(asset["browser_download_url"], zip_path, label=label):
-            extracted = _extract_kext(zip_path, dest_dir, extract)
+            extracted = _extract_kext(zip_path, dest_dir, extracts)
             os.remove(zip_path)
-            downloaded_repos.add(repo)
             if not extracted:
-                progress.error(label, "filer ikke fundet i ZIP")
-                failed.append(name)
+                print(f"  ! No kexts found in ZIP for {repo}")
+                failed.extend(names)
         else:
-            failed.append(name)
+            failed.extend(names)
 
     return failed
 
 
-# ─── Print oversigt ──────────────────────────────────────────────────────────
+# ─── Print summary ────────────────────────────────────────────────────────────
 
 def print_kext_summary(selected, hardware, macos_version):
     is_laptop = hardware.get("is_laptop", False)
-    wifi = hardware.get("wifi", "")
+    wifi      = hardware.get("wifi", "")
 
     print("\n" + "=" * 52)
-    print("  KEXTS — AUTOCORE VALG")
+    print(f"  {t('kexts_title')}")
     print("=" * 52)
     print(f"  macOS version : {macos_version}")
     print(f"  System type   : {'Laptop' if is_laptop else 'Desktop'}")
     print(f"  WiFi          : {wifi}")
-    print(f"\n  {len(selected)} kexts valgt:\n")
+    print(f"\n  {t('kexts_selected', n=len(selected))}\n")
     for name in selected:
         desc = KEXT_DB.get(name, {}).get("description", "")
-        tag = "[altid]" if KEXT_DB.get(name, {}).get("always") else "[hardware]"
-        print(f"    {tag:10} {name:30} {desc}")
+        tag  = t("kexts_tag_always") if KEXT_DB.get(name, {}).get("always") else t("kexts_tag_hw")
+        print(f"    {tag:10} {name:34} {desc}")
     print("=" * 52 + "\n")
 
 
-# ─── Hoved ───────────────────────────────────────────────────────────────────
+# ─── Main entry ───────────────────────────────────────────────────────────────
 
 def select_and_download(hardware, macos_version, dest_dir):
-    """Kaldes fra main.py — returnerer liste af valgte kexts"""
-    print(f"[3/6] Vælger kexts til {macos_version}...", end=" ", flush=True)
+    print(t("kexts_selecting", v=macos_version), end=" ", flush=True)
     selected = select_kexts(hardware, macos_version)
     print(f"✓ ({len(selected)} kexts)")
 
     print_kext_summary(selected, hardware, macos_version)
 
-    print(f"[3/6] Downloader kexts...")
-    failed = download_kexts(selected, hardware, macos_version, dest_dir)
+    print(f"[3/6] Downloading kexts...")
+    failed = download_kexts(list(selected), hardware, macos_version, dest_dir)
 
     if failed:
-        print(f"\n  ! Følgende kexts fejlede: {', '.join(failed)}")
+        print(f"\n  ! {t('kexts_failed_dl', names=', '.join(failed))}")
     else:
-        print(f"  ✓ Alle kexts downloadet til: {dest_dir}")
+        print(t("kexts_all_ok", path=dest_dir))
 
     return selected, failed
 
 
 if __name__ == "__main__":
     test_hw = {
-        "cpu": "Intel Core i5-6200U",
-        "wifi": "Intel (itlwm:)",
-        "ethernet": ["Intel I219V"],
-        "is_laptop": True,
-        "gpus": ["Intel HD Graphics 620"],
+        "cpu": "Intel Core i5-6200U", "cpu_vendor": "Intel", "cpu_generation": "Skylake (6. gen)",
+        "wifi": "Intel (itlwm)", "ethernet": ["Intel I219V"],
+        "is_laptop": True, "gpus": ["Intel HD Graphics 620"],
+        "trackpad_vendor": "elan", "system_vendor": "Lenovo",
     }
     selected, failed = select_and_download(test_hw, "Sonoma", "/tmp/autocore_kexts_test")

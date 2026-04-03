@@ -1,7 +1,7 @@
 """
 AutoCore — usb.py
-Scanner USB-drev, lader brugeren vælge, formaterer og flasher EFI + macOS recovery.
-Virker på macOS, Windows og Linux.
+Scans USB drives, lets user select, formats and flashes EFI + macOS recovery.
+Works on macOS, Windows and Linux.
 """
 
 import os
@@ -15,6 +15,8 @@ import time
 import json
 from datetime import datetime
 
+from lang import t
+
 
 def _run(cmd, shell=False, timeout=120):
     try:
@@ -26,7 +28,7 @@ def _run(cmd, shell=False, timeout=120):
         return "", str(e), -1
 
 
-# ─── Liste USB-drev ───────────────────────────────────────────────────────────
+# ─── List USB drives ──────────────────────────────────────────────────────────
 
 def _list_macos():
     stdout, _, rc = _run(["diskutil", "list", "-plist", "external", "physical"])
@@ -36,7 +38,6 @@ def _list_macos():
         data = plistlib.loads(stdout.encode())
     except Exception:
         return []
-
     drives = []
     for disk in data.get("WholeDisks", []):
         info_out, _, _ = _run(["diskutil", "info", "-plist", disk])
@@ -45,7 +46,7 @@ def _list_macos():
         except Exception:
             continue
         size_gb = info.get("TotalSize", 0) / (1024 ** 3)
-        name = (info.get("MediaName") or info.get("IORegistryEntryName") or "USB Drev").strip()
+        name = (info.get("MediaName") or info.get("IORegistryEntryName") or "USB Drive").strip()
         drives.append({"device": f"/dev/{disk}", "name": name, "size_gb": size_gb})
     return drives
 
@@ -66,8 +67,8 @@ def _list_windows():
             raw = [raw]
         return [
             {
-                "device": str(d.get("Number", "?")),
-                "name":   (d.get("FriendlyName") or "USB Drev").strip(),
+                "device":  str(d.get("Number", "?")),
+                "name":    (d.get("FriendlyName") or "USB Drive").strip(),
                 "size_gb": float(d.get("SizeGB") or 0),
             }
             for d in raw
@@ -84,16 +85,14 @@ def _list_linux():
         devices = json.loads(stdout).get("blockdevices", [])
     except Exception:
         return []
-
     drives = []
     for d in devices:
         if d.get("tran") != "usb":
             continue
-        size_str = d.get("size", "0")
-        size_gb = _parse_lsblk_size(size_str)
+        size_gb = _parse_lsblk_size(d.get("size", "0"))
         drives.append({
             "device":  f"/dev/{d['name']}",
-            "name":    (d.get("model") or "USB Drev").strip(),
+            "name":    (d.get("model") or "USB Drive").strip(),
             "size_gb": size_gb,
         })
     return drives
@@ -102,10 +101,10 @@ def _list_linux():
 def _parse_lsblk_size(s):
     s = s.strip().upper()
     try:
-        if s.endswith("T"):   return float(s[:-1]) * 1024
-        if s.endswith("G"):   return float(s[:-1])
-        if s.endswith("M"):   return float(s[:-1]) / 1024
-        if s.endswith("K"):   return float(s[:-1]) / (1024 ** 2)
+        if s.endswith("T"): return float(s[:-1]) * 1024
+        if s.endswith("G"): return float(s[:-1])
+        if s.endswith("M"): return float(s[:-1]) / 1024
+        if s.endswith("K"): return float(s[:-1]) / (1024 ** 2)
     except ValueError:
         pass
     return 0.0
@@ -115,32 +114,31 @@ def _parse_lsblk_size(s):
 
 def _backup_existing_efi_macos(device):
     """
-    Prøver at mounte første partition på USB og bakke EFI op til skrivebordet,
-    hvis der allerede eksisterer en EFI/OC/config.plist.
+    Try to mount first partition of USB and back up EFI if config.plist exists.
+    Returns True if backup was made, False if no EFI found, None on error.
     """
-    # Find første partition
     part = device + "s1"
     mount_point = tempfile.mkdtemp(prefix="autocore_efi_check_")
     try:
         _, _, rc = _run(["diskutil", "mount", "-mountPoint", mount_point, part], timeout=15)
         if rc != 0:
-            return
+            return None  # mount failed — treat as error
 
         efi_check = os.path.join(mount_point, "EFI", "OC", "config.plist")
         if not os.path.exists(efi_check):
-            return False
+            return False  # no EFI found
 
-        # Eksisterende EFI fundet — backup til skrivebordet
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        desktop = os.path.expanduser("~/Desktop")
+        # Existing EFI found — back up to Desktop
+        timestamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
+        desktop    = os.path.expanduser("~/Desktop")
         backup_dir = os.path.join(desktop, f"AutoCore_EFI_backup_{timestamp}")
-        efi_src = os.path.join(mount_point, "EFI")
+        efi_src    = os.path.join(mount_point, "EFI")
         shutil.copytree(efi_src, os.path.join(backup_dir, "EFI"))
-        print(f"✓\n  ✓ Eksisterende EFI sikkerhedskopieret til: {backup_dir}")
+        print(f"  ✓ Existing EFI backed up to: {backup_dir}")
         return True
 
     except Exception:
-        return False
+        return None  # exception — treat as error
     finally:
         _run(["diskutil", "unmount", mount_point], timeout=10)
         try:
@@ -149,26 +147,26 @@ def _backup_existing_efi_macos(device):
             pass
 
 
-# ─── Størrelses-validering ────────────────────────────────────────────────────
+# ─── Size validation ──────────────────────────────────────────────────────────
 
 MIN_USB_GB = 16.0
 
 def _warn_size(drive):
-    """Returner True hvis brugeren vil fortsætte trods lille USB."""
+    """Return True if user wants to continue despite small USB."""
     size_gb = drive["size_gb"]
     if size_gb >= MIN_USB_GB:
         return True
     print()
-    print(f"  ⚠  {drive['device']} er kun {size_gb:.1f} GB.")
-    print(f"     AutoCore anbefaler minimum {MIN_USB_GB:.0f} GB (recovery er ~750 MB + EFI).")
+    print(f"  ⚠  {drive['device']} is only {size_gb:.1f} GB.")
+    print(f"     AutoCore recommends minimum {MIN_USB_GB:.0f} GB (recovery is ~750 MB + EFI).")
     try:
-        val = input("  Fortsæt alligevel? [j/N]: ").strip().lower()
-        return val in ("j", "y")
+        val = input(t("usb_continue_small")).strip().lower()
+        return val in ("j", "y", "ja", "yes")
     except (KeyboardInterrupt, EOFError):
         return False
 
 
-# ─── Formatér ─────────────────────────────────────────────────────────────────
+# ─── Format ───────────────────────────────────────────────────────────────────
 
 def _format_macos(device):
     _, err, rc = _run(
@@ -180,14 +178,9 @@ def _format_macos(device):
 
 def _format_windows(disk_number):
     script = "\n".join([
-        f"select disk {disk_number}",
-        "clean",
-        "convert mbr",
-        "create partition primary",
-        "format quick fs=fat32 label=AUTOCORE",
-        "assign letter=E",
-        "exit",
-        "",
+        f"select disk {disk_number}", "clean", "convert mbr",
+        "create partition primary", "format quick fs=fat32 label=AUTOCORE",
+        "assign letter=E", "exit", "",
     ])
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
         f.write(script)
@@ -202,29 +195,23 @@ def _format_windows(disk_number):
 
 def _format_linux(device):
     _run(f"umount {device}* 2>/dev/null", shell=True)
-
     _, err1, rc1 = _run(["parted", "-s", device, "mklabel", "msdos"])
     if rc1 != 0:
-        return False, f"parted mklabel fejlede: {err1}"
-
+        return False, f"parted mklabel failed: {err1}"
     _, err2, rc2 = _run(["parted", "-s", device, "mkpart", "primary", "fat32", "1MiB", "100%"])
     if rc2 != 0:
-        return False, f"parted mkpart fejlede: {err2}"
-
+        return False, f"parted mkpart failed: {err2}"
     time.sleep(1)
-
     partition = device + ("p1" if device[-1].isdigit() else "1")
     if not os.path.exists(partition):
         partition = device + "1"
-
     _, err3, rc3 = _run(["mkfs.fat", "-F", "32", "-n", "AUTOCORE", partition])
     if rc3 != 0:
-        return False, f"mkfs.fat fejlede: {err3}"
-
+        return False, f"mkfs.fat failed: {err3}"
     return True, ""
 
 
-# ─── Find mount point ─────────────────────────────────────────────────────────
+# ─── Mount ────────────────────────────────────────────────────────────────────
 
 def _mount_macos(device):
     for _ in range(10):
@@ -232,12 +219,9 @@ def _mount_macos(device):
         if os.path.exists(vol):
             return vol
         time.sleep(1)
-
     _run(["diskutil", "mount", device + "s1"])
     time.sleep(2)
-    if os.path.exists("/Volumes/AUTOCORE"):
-        return "/Volumes/AUTOCORE"
-    return ""
+    return "/Volumes/AUTOCORE" if os.path.exists("/Volumes/AUTOCORE") else ""
 
 
 def _mount_windows(_disk_number):
@@ -249,7 +233,6 @@ def _mount_linux(device):
     partition = device + ("p1" if device[-1].isdigit() else "1")
     if not os.path.exists(partition):
         partition = device + "1"
-
     mount_point = tempfile.mkdtemp(prefix="autocore_usb_")
     _, _, rc = _run(["mount", partition, mount_point])
     if rc != 0:
@@ -261,7 +244,7 @@ def _mount_linux(device):
     return mount_point
 
 
-# ─── Skub ud ──────────────────────────────────────────────────────────────────
+# ─── Eject ────────────────────────────────────────────────────────────────────
 
 def _eject_macos(device):
     _run(["diskutil", "eject", device])
@@ -282,51 +265,88 @@ def _eject_linux(device, mount_point):
     _run(["eject", device])
 
 
-# ─── Kopi med progress ────────────────────────────────────────────────────────
+# ─── Copy with progress ───────────────────────────────────────────────────────
 
 def _copy_with_progress(src, dst, label):
-    import progress
     total  = sum(len(files) for _, _, files in os.walk(src))
     copied = 0
-
     for root, dirs, files in os.walk(src):
         rel     = os.path.relpath(root, src)
         dst_dir = os.path.join(dst, rel) if rel != "." else dst
         os.makedirs(dst_dir, exist_ok=True)
-
         for fname in files:
             shutil.copy2(os.path.join(root, fname), os.path.join(dst_dir, fname))
             copied += 1
-            progress.update(f"→ {label}", copied, total)
+            pct = int(copied / total * 100) if total > 0 else 100
+            print(f"\r  Copying {label:<28} {pct:3d}%", end="", flush=True)
+    print(f"\r  Copying {label:<28} ✓   ")
 
-    progress.done(f"→ {label}")
+
+# ─── NEXT_STEPS.md ────────────────────────────────────────────────────────────
+
+def _write_next_steps(mount_point, hardware=None):
+    """Write a BIOS checklist to the USB root as NEXT_STEPS.md."""
+    gen_num = 0
+    if hardware:
+        import re
+        m = re.search(r'(\d+)\. gen', hardware.get("cpu_generation", ""))
+        gen_num = int(m.group(1)) if m else 0
+
+    lines = [
+        "# AutoCore — Next Steps\n\n",
+        "## BIOS Settings (set BEFORE booting from USB)\n\n",
+        "- [ ] **Secure Boot** → Disabled\n",
+        "- [ ] **Fast Boot** → Disabled\n",
+        "- [ ] **SATA Mode** → AHCI (not RAID or IDE)\n",
+        "- [ ] **CSM / Legacy Boot** → Disabled (pure UEFI)\n",
+        "- [ ] **VT-d** → Disabled (or enable DisableIoMapper in OpenCore)\n",
+        "- [ ] **CFG Lock** → Disabled (if option available in BIOS)\n",
+        "- [ ] **XHCI Hand-off** → Enabled\n",
+        "- [ ] **DVMT Pre-Alloc** → 64 MB or higher (laptop iGPU)\n",
+    ]
+    if gen_num >= 12:
+        lines.append("- [ ] **Above 4G Decoding** → Enabled (required for gen 12+ GPU)\n")
+        lines.append("- [ ] **Resizable BAR / SAM** → Disabled (can cause boot issues)\n")
+
+    lines += [
+        "\n## After installing macOS\n\n",
+        "1. Run **CoreSync.app** (on this USB) to install OpenCore to your internal drive\n",
+        "2. Verify your serial is invalid at https://checkcoverage.apple.com\n",
+        "3. Set up iCloud/iMessage with your new SMBIOS\n",
+        "\n## Support\n\n",
+        "- OpenCore Guide: https://dortania.github.io/OpenCore-Install-Guide/\n",
+        "- AutoCore GitHub: https://github.com/petrusbering3-ship-it/autocore\n",
+    ]
+
+    try:
+        path = os.path.join(mount_point, "NEXT_STEPS.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+    except Exception:
+        pass
 
 
 # ─── Public API ───────────────────────────────────────────────────────────────
 
 def list_drives():
     os_name = platform.system()
-    if os_name == "Darwin":   return _list_macos()
-    if os_name == "Windows":  return _list_windows()
-    if os_name == "Linux":    return _list_linux()
+    if os_name == "Darwin":  return _list_macos()
+    if os_name == "Windows": return _list_windows()
+    if os_name == "Linux":   return _list_linux()
     return []
 
 
 def select_drive():
-    """
-    Viser tilgængelige USB-drev med størrelse og model.
-    Advarer hvis < 16 GB. Returnerer valgt drev-dict eller None.
-    """
     drives = list_drives()
     safe   = [d for d in drives if 4 <= d["size_gb"] <= 512]
 
     if not safe:
-        print("  ! Ingen USB-drev fundet (forventet 4–512 GB).")
-        print("  Tilslut en USB (min. 16 GB anbefalet) og prøv igen.")
+        print(t("usb_no_drives"))
+        print(t("usb_plug_in"))
         return None
 
     print()
-    print("  USB-drev tilgængelige:")
+    print(t("usb_available"))
     for i, d in enumerate(safe, 1):
         size_warn = " ⚠ <16 GB" if d["size_gb"] < MIN_USB_GB else ""
         print(f"    [{i}] {d['device']:14}  {d['name']:<28}  {d['size_gb']:.1f} GB{size_warn}")
@@ -334,7 +354,7 @@ def select_drive():
 
     while True:
         try:
-            val = input(f"  Vælg USB [1-{len(safe)}]: ").strip()
+            val = input(t("usb_select_prompt", n=len(safe))).strip()
             idx = int(val) - 1
             if 0 <= idx < len(safe):
                 chosen = safe[idx]
@@ -346,15 +366,15 @@ def select_drive():
         except KeyboardInterrupt:
             print()
             return None
-        print(f"  Ugyldigt valg.")
+        print(t("usb_invalid_choice"))
 
 
-def flash_usb(output_dir):
+def flash_usb(output_dir, hardware=None):
     """
-    Hoved-funktion — vælg USB, backup eksisterende EFI, formatér, kopier EFI + recovery.
-    Returnerer True ved succes, False ved fejl eller annullering.
+    Main function — select USB, backup existing EFI, format, copy EFI + recovery.
+    Returns True on success, False on failure or cancellation.
     """
-    print("[6/6] Flash til USB...")
+    print("[6/6] Flash to USB...")
 
     drive = select_drive()
     if not drive:
@@ -365,31 +385,33 @@ def flash_usb(output_dir):
     size_gb = drive["size_gb"]
     os_name = platform.system()
 
-    # ── Bekræftelse ──────────────────────────────────────────────────────────
+    # ── Confirmation ──────────────────────────────────────────────────────────
     print()
-    print(f"  ⚠  ADVARSEL: {device} ({name}, {size_gb:.1f} GB) vil blive SLETTET!")
+    print(t("usb_confirm_delete", device=device, name=name, size=size_gb))
     print()
     try:
-        confirm = input("  Skriv 'JA' for at fortsætte: ").strip()
+        confirm = input(t("usb_confirm_prompt")).strip().upper()
     except (KeyboardInterrupt, EOFError):
-        print("\n  Annulleret.")
+        print(f"\n{t('usb_cancelled')}")
         return False
 
-    if confirm != "JA":
-        print("  Annulleret.")
+    if confirm not in ("JA", "YES", "J", "Y"):
+        print(t("usb_cancelled"))
         return False
 
     print()
 
-    # ── Backup eksisterende EFI (macOS) ───────────────────────────────────────
+    # ── Backup existing EFI (macOS only) ─────────────────────────────────────
     if os_name == "Darwin":
-        print("  → Tjekker for eksisterende EFI på USB...", end=" ", flush=True)
-        if not _backup_existing_efi_macos(device):
-            print("ingen EFI fundet")
+        print("  → Checking for existing EFI on USB...", end=" ", flush=True)
+        result = _backup_existing_efi_macos(device)
+        if result is False:
+            print("none found")
+        elif result is None:
+            print("(could not check)")
 
-    # ── Formatér ─────────────────────────────────────────────────────────────
-    print(f"  → Formaterer {device}...", end=" ", flush=True)
-
+    # ── Format ───────────────────────────────────────────────────────────────
+    print(f"  → Formatting {device}...", end=" ", flush=True)
     if os_name == "Darwin":
         ok, err = _format_macos(device)
     elif os_name == "Windows":
@@ -397,13 +419,13 @@ def flash_usb(output_dir):
     elif os_name == "Linux":
         ok, err = _format_linux(device)
     else:
-        print("FEJL — ukendt OS")
+        print(t("scan_unknown_os"))
         return False
 
     if not ok:
-        print(f"FEJL\n  ! {err}")
+        print(f"ERROR\n  ! {err}")
         if os_name == "Linux":
-            print("  Tip: kør med sudo / som root")
+            print("  Tip: run with sudo / as root")
         return False
     print("✓")
 
@@ -416,17 +438,17 @@ def flash_usb(output_dir):
         mount_point = _mount_linux(device)
 
     if not mount_point or not os.path.exists(mount_point):
-        print(f"  ! Kunne ikke mounte {device} efter formatering")
+        print(f"  ! Could not mount {device} after formatting")
         return False
 
-    # ── Kopier EFI ───────────────────────────────────────────────────────────
+    # ── Copy EFI ──────────────────────────────────────────────────────────────
     efi_src = os.path.join(output_dir, "EFI")
     if os.path.exists(efi_src):
         _copy_with_progress(efi_src, os.path.join(mount_point, "EFI"), "EFI")
     else:
-        print(f"  ! EFI mappe ikke fundet i: {output_dir}")
+        print(f"  ! EFI folder not found in: {output_dir}")
 
-    # ── Kopier macOS recovery ─────────────────────────────────────────────────
+    # ── Copy macOS recovery ───────────────────────────────────────────────────
     recovery_src = os.path.join(output_dir, "com.apple.recovery.boot")
     if os.path.exists(recovery_src):
         _copy_with_progress(
@@ -435,9 +457,9 @@ def flash_usb(output_dir):
             "macOS recovery"
         )
     else:
-        print("  ! com.apple.recovery.boot ikke fundet — springer over")
+        print("  ! com.apple.recovery.boot not found — skipping")
 
-    # ── Kopier CoreSync.app ────────────────────────────────────────────────────
+    # ── Copy CoreSync.app ─────────────────────────────────────────────────────
     coresync_src = os.path.join(output_dir, "CoreSync.app")
     if os.path.exists(coresync_src):
         dst = os.path.join(mount_point, "CoreSync.app")
@@ -446,8 +468,11 @@ def flash_usb(output_dir):
         shutil.copytree(coresync_src, dst)
         print("    → CoreSync.app ✓")
 
-    # ── Skub ud ───────────────────────────────────────────────────────────────
-    print("  → Skubber ud...", end=" ", flush=True)
+    # ── Write NEXT_STEPS.md ───────────────────────────────────────────────────
+    _write_next_steps(mount_point, hardware=hardware)
+
+    # ── Eject ─────────────────────────────────────────────────────────────────
+    print(t("usb_eject"), end=" ", flush=True)
     if os_name == "Darwin":
         _eject_macos(device)
     elif os_name == "Windows":
@@ -457,9 +482,9 @@ def flash_usb(output_dir):
     print("✓")
 
     print()
-    print("  ✓ USB klar!")
-    print("  → Tilslut USB til din hackintosh og vælg den i BIOS boot menu")
-    print("  → OpenCore picker vises — vælg 'Install macOS ...'")
+    print(t("usb_done"))
+    print(t("usb_next1"))
+    print(t("usb_next2"))
     print()
     return True
 
@@ -467,11 +492,11 @@ def flash_usb(output_dir):
 # ─── Standalone test ─────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print(f"USB-drev på {platform.system()}:")
+    print(f"USB drives on {platform.system()}:")
     drives = list_drives()
     if drives:
         for d in drives:
             size_warn = " ⚠ <16 GB" if d["size_gb"] < MIN_USB_GB else ""
             print(f"  {d['device']:14}  {d['name']:<28}  {d['size_gb']:.1f} GB{size_warn}")
     else:
-        print("  Ingen USB-drev fundet")
+        print("  No USB drives found")

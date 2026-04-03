@@ -6,8 +6,33 @@ Guides the user from hardware scan to finished hackintosh USB.
 
 import os
 import sys
+import argparse
 import tempfile
 import platform
+import json
+
+# ── Auto-install packages before anything else ────────────────────────────────
+import subprocess as _sp
+def _bootstrap():
+    missing = []
+    try:
+        import requests  # noqa
+    except ImportError:
+        missing.append("requests")
+    if missing:
+        print(f"  [AutoCore] Installing: {', '.join(missing)}...", end=" ", flush=True)
+        _sp.run([sys.executable, "-m", "pip", "install"] + missing + ["--quiet"], check=True)
+        print("✓")
+_bootstrap()
+
+# ── Imports after bootstrap ───────────────────────────────────────────────────
+from lang import t, set_lang, LANG
+import lang as _lang
+import utils
+
+
+# ─── Version ──────────────────────────────────────────────────────────────────
+__version__ = "1.0.0"
 
 
 # ─── Log file (tee stdout → ~/Desktop/autocore_log.txt) ──────────────────────
@@ -15,15 +40,12 @@ import platform
 class _Tee:
     def __init__(self, *streams):
         self._streams = streams
-
     def write(self, data):
         for s in self._streams:
             s.write(data)
-
     def flush(self):
         for s in self._streams:
             s.flush()
-
     def fileno(self):
         return self._streams[0].fileno()
 
@@ -32,7 +54,7 @@ _log_file = None
 
 def _start_log():
     global _log_file
-    desktop = os.path.expanduser("~/Desktop")
+    desktop  = os.path.expanduser("~/Desktop")
     log_path = os.path.join(desktop, "autocore_log.txt")
     try:
         _log_file = open(log_path, "w", encoding="utf-8")
@@ -52,130 +74,9 @@ def _stop_log():
         _log_file = None
 
 
-# ─── Translations ─────────────────────────────────────────────────────────────
-
-_T = {
-    "DA": {
-        "banner":           "  AutoCore — Automatiseret Hackintosh USB-installer",
-        "select_version":   "[2/6] Vælg macOS version:",
-        "version_prompt":   "  Version [1-{n}]: ",
-        "version_chosen":   "  macOS version valgt: {v}",
-        "aborted":          "\n\n  Afbrudt.",
-        "hw_fail":          "  ✗ Hardware-scanning fejlede. Afslutter.",
-        "hw_issues_header": "  ┌─ HARDWARE-PROBLEMER ──────────────────────────────────────",
-        "hw_issues_footer": "  └───────────────────────────────────────────────────────────",
-        "hw_continue":      "  Hardware er muligvis ikke macOS-kompatibelt. Fortsæt alligevel? [j/N]: ",
-        "hw_continue_key":  "j",
-        "exiting":          "  Afslutter.",
-        "kexts_failed":     "  ! {n} kexts fejlede — fortsætter uden: {names}",
-        "efi_fail":         "  ✗ EFI-build fejlede. Afslutter.",
-        "plist_fail":       "  ✗ config.plist generering fejlede. Afslutter.",
-        "coresync_ready":   "  ✓ CoreSync.app klar — kopieres til USB og gemt på Skrivebordet\n",
-        "done_title":       "  ║  ✓  AutoCore fuldført!                               ║",
-        "done_next":        "  Hvad sker der nu:",
-        "done_step1":       "  1. Sæt USB i din hackintosh og boot fra den (F12/Del/F2)",
-        "done_step2":       "  2. Vælg 'Install macOS' i OpenCore-pickeren",
-        "done_step3":       "  3. Installer macOS normalt",
-        "done_step4":       "  4. Kør CoreSync.app (på USB) for at installere OpenCore",
-        "done_step4b":      "     permanent på din harddisk",
-        "flash_fail":       "  USB-flash annulleret eller fejlet.",
-        "efi_available":    "  EFI-mappen er stadig tilgængelig i: {path}",
-        "vm_warning":       "  ⚠  Kører i virtuel maskine — USB-adgang kan være upålidelig",
-        "net_check":        "  Tjekker netværksforbindelse...",
-        "net_ok":           "  ✓ Netværk OK",
-        "net_fail":         "  ✗ Ingen netværksforbindelse — downloads vil fejle",
-        "net_continue":     "  Fortsæt alligevel? [j/N]: ",
-        "net_continue_key": "j",
-        "log_saved":        "  Log gemt til: {path}",
-        "hw_report":        "  Hardware-rapport gemt til: {path}",
-        "bios_title":       "  ┌─ BIOS-INDSTILLINGER (VIGTIGT) ─────────────────────────────",
-        "bios_body": [
-            "  │  Inden du booter fra USB — sæt disse indstillinger i BIOS:",
-            "  │",
-            "  │  ✓ Secure Boot          → Disabled",
-            "  │  ✓ CSM / Legacy Boot    → Disabled  (ren UEFI)",
-            "  │  ✓ VT-d                 → Disabled  (eller aktiver DisableIoMapper i OC)",
-            "  │  ✓ CFG Lock             → Disabled  (hvis muligt)",
-            "  │  ✓ XHCI Hand-off        → Enabled",
-            "  │  ✓ Above 4G Decoding    → Enabled   (desktop: kræves for GPU)",
-            "  │  ✓ DVMT Pre-Alloc       → 64 MB     (laptop: iGPU framebuffer)",
-            "  │  ✓ Fast Boot            → Disabled",
-            "  │  ✓ OS Type              → Other OS  (eller Windows UEFI)",
-        ],
-        "bios_footer":        "  └───────────────────────────────────────────────────────────",
-        "update_found":       "  Eksisterende EFI fundet i: {path}",
-        "update_choice":      "    [1] Opdater (ny OpenCore + kexts, bevar config.plist)\n    [2] Fuld build fra bunden",
-        "update_prompt":      "  [1/2]: ",
-        "update_mode":        "  → Kører i opdateringstilstand",
-    },
-    "EN": {
-        "banner":           "  AutoCore — Automated Hackintosh USB Installer",
-        "select_version":   "[2/6] Select macOS version:",
-        "version_prompt":   "  Version [1-{n}]: ",
-        "version_chosen":   "  macOS version selected: {v}",
-        "aborted":          "\n\n  Aborted.",
-        "hw_fail":          "  ✗ Hardware scan failed. Exiting.",
-        "hw_issues_header": "  ┌─ HARDWARE ISSUES ─────────────────────────────────────────",
-        "hw_issues_footer": "  └───────────────────────────────────────────────────────────",
-        "hw_continue":      "  Hardware may not be macOS-compatible. Continue anyway? [y/N]: ",
-        "hw_continue_key":  "y",
-        "exiting":          "  Exiting.",
-        "kexts_failed":     "  ! {n} kexts failed — continuing without: {names}",
-        "efi_fail":         "  ✗ EFI build failed. Exiting.",
-        "plist_fail":       "  ✗ config.plist generation failed. Exiting.",
-        "coresync_ready":   "  ✓ CoreSync.app ready — copied to USB and saved to Desktop\n",
-        "done_title":       "  ║  ✓  AutoCore complete!                               ║",
-        "done_next":        "  What happens next:",
-        "done_step1":       "  1. Plug USB into your hackintosh and boot from it (F12/Del/F2)",
-        "done_step2":       "  2. Select 'Install macOS' in the OpenCore picker",
-        "done_step3":       "  3. Install macOS normally",
-        "done_step4":       "  4. Run CoreSync.app (on the USB) to install OpenCore",
-        "done_step4b":      "     permanently onto your hard drive",
-        "flash_fail":       "  USB flash cancelled or failed.",
-        "efi_available":    "  EFI folder is still available at: {path}",
-        "vm_warning":       "  ⚠  Running inside a virtual machine — USB access may be unreliable",
-        "net_check":        "  Checking network connection...",
-        "net_ok":           "  ✓ Network OK",
-        "net_fail":         "  ✗ No network connection — downloads will fail",
-        "net_continue":     "  Continue anyway? [y/N]: ",
-        "net_continue_key": "y",
-        "log_saved":        "  Log saved to: {path}",
-        "hw_report":        "  Hardware report saved to: {path}",
-        "bios_title":       "  ┌─ BIOS SETTINGS (IMPORTANT) ────────────────────────────────",
-        "bios_body": [
-            "  │  Before booting from USB — set these options in BIOS:",
-            "  │",
-            "  │  ✓ Secure Boot          → Disabled",
-            "  │  ✓ CSM / Legacy Boot    → Disabled  (pure UEFI)",
-            "  │  ✓ VT-d                 → Disabled  (or enable DisableIoMapper in OC)",
-            "  │  ✓ CFG Lock             → Disabled  (if available)",
-            "  │  ✓ XHCI Hand-off        → Enabled",
-            "  │  ✓ Above 4G Decoding    → Enabled   (desktop: required for GPU)",
-            "  │  ✓ DVMT Pre-Alloc       → 64 MB     (laptop: iGPU framebuffer)",
-            "  │  ✓ Fast Boot            → Disabled",
-            "  │  ✓ OS Type              → Other OS  (or Windows UEFI)",
-        ],
-        "bios_footer":        "  └───────────────────────────────────────────────────────────",
-        "update_found":       "  Existing EFI found at: {path}",
-        "update_choice":      "    [1] Update (new OpenCore + kexts, keep config.plist)\n    [2] Full build from scratch",
-        "update_prompt":      "  [1/2]: ",
-        "update_mode":        "  → Running in update mode",
-    },
-}
-
-LANG = "DA"  # set by _ask_language()
-
-
-def t(key, **kwargs):
-    """Returns the translated string for the current language."""
-    s = _T[LANG].get(key, _T["EN"].get(key, key))
-    return s.format(**kwargs) if kwargs else s
-
-
 # ─── Language selector ────────────────────────────────────────────────────────
 
 def _ask_language():
-    global LANG
     print()
     print("  Vælg sprog / Select language:")
     print("    [1] Dansk")
@@ -185,10 +86,10 @@ def _ask_language():
         try:
             val = input("  [1/2]: ").strip()
             if val == "1":
-                LANG = "DA"
+                set_lang("DA")
                 return
             if val == "2":
-                LANG = "EN"
+                set_lang("EN")
                 return
         except (ValueError, KeyboardInterrupt):
             print()
@@ -199,25 +100,15 @@ def _ask_language():
 
 def _check_network():
     print(t("net_check"), end=" ", flush=True)
-    try:
-        import urllib.request
-        urllib.request.urlopen("https://github.com", timeout=8)
+    if utils.check_internet():
         print(t("net_ok"))
         return True
-    except Exception:
-        pass
-    # Second try: Apple CDN
-    try:
-        urllib.request.urlopen("https://oscdn.apple.com", timeout=8)
-        print(t("net_ok"))
-        return True
-    except Exception:
-        pass
 
     print(t("net_fail"))
+    print(t("net_offline_warn"))
     try:
         val = input(t("net_continue")).strip().lower()
-        return val == t("net_continue_key")
+        return val in ("j", "y", "ja", "yes")
     except (KeyboardInterrupt, EOFError):
         return False
 
@@ -225,7 +116,7 @@ def _check_network():
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _ask_macos_version():
-    from kexts import MACOS_VERSIONS
+    from constants import MACOS_VERSIONS
     print(f"\n{t('select_version')}")
     for i, v in enumerate(MACOS_VERSIONS, 1):
         print(f"    [{i}] {v}")
@@ -246,16 +137,14 @@ def _confirm_compatibility(hw):
     c = hw.get("compatibility", {})
     if not c.get("issues"):
         return True
-
     print(f"\n{t('hw_issues_header')}")
     for issue in c["issues"]:
         print(f"  │  ✗ {issue}")
     print(t("hw_issues_footer"))
     print()
-
     try:
         val = input(t("hw_continue")).strip().lower()
-        return val == t("hw_continue_key")
+        return val in ("j", "y", "ja", "yes")
     except KeyboardInterrupt:
         return False
 
@@ -270,11 +159,9 @@ def _print_bios_checklist():
 
 
 def _ask_build_mode(output_dir):
-    """Hvis eksisterende EFI er fundet, spørg om opdatering eller fuld build."""
     config_path = os.path.join(output_dir, "EFI", "OC", "config.plist")
     if not os.path.exists(config_path):
         return "fresh"
-
     print()
     print(t("update_found", path=output_dir))
     print(t("update_choice"))
@@ -291,41 +178,80 @@ def _ask_build_mode(output_dir):
             sys.exit(0)
 
 
+def _save_hw_json(hw):
+    """Save hardware dict to ~/Desktop/AutoCore_hardware.json."""
+    desktop = os.path.expanduser("~/Desktop")
+    path    = os.path.join(desktop, "AutoCore_hardware.json")
+    try:
+        # Convert non-serialisable types
+        def _clean(obj):
+            if isinstance(obj, bytes):
+                return obj.hex()
+            if isinstance(obj, dict):
+                return {k: _clean(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_clean(i) for i in obj]
+            return obj
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(_clean(hw), f, indent=2)
+        return path
+    except Exception:
+        return None
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
-    # Language selector — always shown first, bilingual prompt
+    # ── CLI flags ─────────────────────────────────────────────────────────────
+    parser = argparse.ArgumentParser(
+        prog="autocore",
+        description="Automated Hackintosh USB builder"
+    )
+    parser.add_argument("--version",    action="store_true", help="Print version and exit")
+    parser.add_argument("--dry-run",    action="store_true", help="Scan + select without downloading or flashing")
+    parser.add_argument("--export-efi", action="store_true", help="Build EFI to ~/Desktop/AutoCore_EFI instead of USB")
+    args = parser.parse_args()
+
+    if args.version:
+        print(f"AutoCore {__version__}")
+        sys.exit(0)
+
+    # ── Language selector (always first, bilingual prompt) ────────────────────
     _ask_language()
 
-    # Start logging to ~/Desktop/autocore_log.txt
+    # ── Start log ─────────────────────────────────────────────────────────────
     log_path = _start_log()
 
     print()
     print("  ╔══════════════════════════════════════════════════════╗")
     print(f"  ║                                                      ║")
-    print(f"  ║  {t('banner'):<52}  ║")
+    banner = t("banner")
+    print(f"  ║  {banner:<52}  ║")
     print(f"  ║                                                      ║")
     print("  ╚══════════════════════════════════════════════════════╝")
     print()
 
-    # ── Netværkstjek / Network check ─────────────────────────────────────────
-    if not _check_network():
-        print(t("exiting"))
-        _stop_log()
-        sys.exit(0)
+    if args.dry_run:
+        print(t("dry_run_notice"))
+        print()
 
-    print()
+    # ── Internet check ────────────────────────────────────────────────────────
+    if not args.dry_run:
+        if not _check_network():
+            print(t("exiting"))
+            _stop_log()
+            sys.exit(0)
+        print()
 
-    # ── Trin 1 / Step 1: Hardware ─────────────────────────────────────────────
+    # ── Step 1: Hardware scan ─────────────────────────────────────────────────
     import hardware
     hw = hardware.scan()
     if not hw:
         print(t("hw_fail"))
         _stop_log()
         sys.exit(1)
-    hardware.print_summary(hw, lang=LANG)
+    hardware.print_summary(hw, lang=_lang.LANG)
 
-    # VM advarsel
     if hw.get("is_vm"):
         print(t("vm_warning"))
         print()
@@ -335,62 +261,71 @@ def main():
         _stop_log()
         sys.exit(0)
 
-    # Gem hardware-rapport til skrivebordet
+    # Save hardware report + JSON
     report_path = hardware.save_report(hw)
     if report_path:
         print(t("hw_report", path=report_path))
 
-    # ── Trin 2 / Step 2: macOS version ───────────────────────────────────────
+    json_path = _save_hw_json(hw)
+    if json_path:
+        print(t("hw_json_saved", path=json_path))
+
+    # ── Step 2: macOS version ─────────────────────────────────────────────────
     macos_version = _ask_macos_version()
     print(t("version_chosen", v=macos_version))
 
-    # ── Output directory ──────────────────────────────────────────────────────
+    # ── Step 3: Kext selection ────────────────────────────────────────────────
+    import kexts
     output_dir = os.path.join(tempfile.gettempdir(), "autocore_build")
     kexts_dir  = os.path.join(output_dir, "_kexts")
     os.makedirs(output_dir, exist_ok=True)
 
+    if args.dry_run:
+        # Dry-run: just show selection and exit
+        print(t("kexts_selecting", v=macos_version), end=" ", flush=True)
+        selected = kexts.select_kexts(hw, macos_version)
+        print(f"✓ ({len(selected)} kexts)")
+        kexts.print_kext_summary(selected, hw, macos_version)
+        print(t("dry_run_done"))
+        _stop_log()
+        sys.exit(0)
+
     print()
 
-    # ── Build mode: ny eller opdatering ──────────────────────────────────────
+    # ── Build mode: new or update ─────────────────────────────────────────────
     build_mode = _ask_build_mode(output_dir)
     if build_mode == "update":
         print(t("update_mode"))
-
     print()
 
-    # ── Trin 3 / Step 3: Kexts ───────────────────────────────────────────────
-    import kexts
+    # ── Step 3: Download kexts ────────────────────────────────────────────────
     selected, failed = kexts.select_and_download(hw, macos_version, kexts_dir)
     if failed:
         print(t("kexts_failed", n=len(failed), names=", ".join(failed)))
-
     print()
 
     import efi_builder
     import config_plist
 
     if build_mode == "update":
-        # ── Opdater tilstand: ny OC + kexts, bevar config.plist ──────────────
         update_result = efi_builder.update_efi(kexts_dir, output_dir, hardware=hw)
         if not update_result.get("ok"):
             print(t("efi_fail"))
             _stop_log()
             sys.exit(1)
-
         config_path = os.path.join(output_dir, "EFI", "OC", "config.plist")
         efi_builder.run_ocvalidate(update_result.get("ocvalidate"), config_path)
 
     else:
-        # ── Trin 4 / Step 4: EFI + OpenCore + recovery ───────────────────────
+        # ── Step 4: EFI + OpenCore + recovery ────────────────────────────────
         build_result = efi_builder.build(macos_version, kexts_dir, output_dir, hardware=hw)
         if not build_result.get("ok"):
             print(t("efi_fail"))
             _stop_log()
             sys.exit(1)
-
         print()
 
-        # ── Trin 5 / Step 5: config.plist ────────────────────────────────────
+        # ── Step 5: config.plist ──────────────────────────────────────────────
         config_path = config_plist.generate(
             hw, selected, macos_version, output_dir,
             ssdts=build_result.get("ssdts", []),
@@ -402,8 +337,6 @@ def main():
             sys.exit(1)
 
         config_plist.print_summary(config_path, hw, selected)
-
-        # ── OC Validate ──────────────────────────────────────────────────────
         efi_builder.run_ocvalidate(build_result.get("ocvalidate"), config_path)
 
     # ── USB Mapper (macOS only) ───────────────────────────────────────────────
@@ -419,12 +352,27 @@ def main():
         if app_path:
             print(t("coresync_ready"))
 
-    # ── BIOS tjekliste ────────────────────────────────────────────────────────
+    # ── BIOS checklist ────────────────────────────────────────────────────────
     _print_bios_checklist()
 
-    # ── Trin 6 / Step 6: Flash USB ───────────────────────────────────────────
+    # ── Export EFI mode ───────────────────────────────────────────────────────
+    if args.export_efi:
+        import shutil
+        export_path = os.path.join(os.path.expanduser("~/Desktop"), "AutoCore_EFI")
+        print(t("export_notice", path=export_path))
+        efi_src = os.path.join(output_dir, "EFI")
+        if os.path.exists(export_path):
+            shutil.rmtree(export_path)
+        shutil.copytree(efi_src, export_path)
+        print(t("export_done", path=export_path))
+        if log_path:
+            print(t("log_saved", path=log_path))
+        _stop_log()
+        sys.exit(0)
+
+    # ── Step 6: Flash USB ─────────────────────────────────────────────────────
     import usb
-    success = usb.flash_usb(output_dir)
+    success = usb.flash_usb(output_dir, hardware=hw)
 
     if success:
         print()
@@ -447,7 +395,6 @@ def main():
 
     if log_path:
         print(t("log_saved", path=log_path))
-
     _stop_log()
 
 
