@@ -8,6 +8,8 @@
 
 **Supports macOS · Windows · Linux**
 
+**v1.2** — A lot of bugs fixed. `--dry-run` added to test without flashing anything.
+
 </div>
 
 <br>
@@ -56,6 +58,14 @@ python3 main.py
 
 That's it. No config files. No manual kext hunting. No crying.
 
+### Flags
+
+```bash
+python3 main.py --dry-run      # Scan hardware + show kext selection. No downloads. No flashing. Safe to test.
+python3 main.py --export-efi   # Build full EFI to ~/Desktop/AutoCore_EFI instead of flashing USB.
+python3 main.py --version      # Print version and exit.
+```
+
 <br>
 
 ---
@@ -74,14 +84,17 @@ Missing Python packages are installed automatically. You're welcome.
 
 | File | What it does |
 | --- | --- |
-| `main.py` | The only file you need to touch. Ties everything together. Guides through all 6 steps with language selection (Danish / English). |
-| `hardware.py` | Scans your CPU, GPU, WiFi, ethernet, audio, NVMe, trackpad and battery. Checks macOS compatibility. Works on macOS, Windows and Linux. |
-| `kexts.py` | Picks the right kexts for your hardware and macOS version. Downloads them from GitHub automatically. Includes USB mapping via USBToolBox. |
-| `efi_builder.py` | Builds the full EFI folder. Downloads OpenCore (RELEASE), copies kexts into `EFI/OC/Kexts/`, and grabs macOS recovery straight from Apple. |
-| `config_plist.py` | Generates a complete `config.plist` based on your hardware. SMBIOS is auto-generated using macserial — no placeholders. |
-| `sample.plist` | The base OpenCore config with safe defaults. Modified by `config_plist.py`. Don't touch this. |
-| `usb.py` | Lets you select a USB drive. Formats and flashes the EFI folder + macOS recovery to the USB. |
-| `build_coresync.py` | Builds **CoreSync.app** — a post-install tool that copies the EFI to your internal disk. No Python required. |
+| `main.py` | Entry point. Ties all 6 steps together. Handles language selection, --dry-run, --export-efi, --version flags. |
+| `hardware.py` | Scans CPU, GPU, WiFi, ethernet, audio, NVMe, trackpad, card reader, system vendor and battery. Works on macOS, Windows and Linux. |
+| `kexts.py` | Selects and downloads the right kexts for your hardware and macOS version from GitHub. |
+| `efi_builder.py` | Builds the full EFI folder. Downloads OpenCore (RELEASE), copies kexts, grabs macOS recovery from Apple. |
+| `config_plist.py` | Generates a complete `config.plist`. SMBIOS, serial, MLB and UUID auto-generated via macserial. |
+| `usb.py` | Selects, formats and flashes a USB drive. Writes `NEXT_STEPS.md` with BIOS settings to the USB root. |
+| `lang.py` | All Danish / English translations. Import `t()` from here — never hardcode UI strings. |
+| `utils.py` | Shared helpers: auto-installs missing packages, `check_internet()`. |
+| `constants.py` | Shared constants: `MACOS_VERSIONS`, `MACOS_ORDER`. |
+| `sample.plist` | Base OpenCore config with safe defaults. Modified by `config_plist.py`. Do not touch. |
+| `build_coresync.py` | Builds **CoreSync.app** — post-install tool that copies EFI to your internal disk. No Python required. |
 
 <br>
 
@@ -131,35 +144,67 @@ Find it on the USB or on your Desktop after install.
 
 | Kext | When it's included |
 | --- | --- |
-| | |
 | **NVMeFix** | NVMe drive detected |
-| | |
 | **IntelMausi** | Intel ethernet |
-| | |
-| **RealtekRTL8111** | Realtek ethernet |
-| | |
-| **AirportItlwm** | Intel WiFi (macOS version-specific) |
-| | |
+| **RealtekRTL8111** | Realtek RTL8111/8168 ethernet |
+| **AtherosE2200Ethernet** | Atheros / Killer E2200/E2400 ethernet |
+| **LucyRTL8125Ethernet** | Realtek RTL8125 2.5GbE ethernet |
+| **AppleIGB** | Intel I210/I211/I350 server ethernet |
+| **AirportItlwm** | Intel WiFi (matched to your macOS version) |
+| **itlwm** | Intel WiFi alternative — more stable, no AirDrop |
 | **AirportBrcmFixup** | Broadcom WiFi |
-| | |
 | **IntelBluetoothFirmware** | Intel Bluetooth |
-| | |
+| **IntelBTPatcher** | Intel Bluetooth patcher (required alongside the above) |
 | **BlueToolFixup** | Bluetooth fix (Monterey+) |
-| | |
 | **BrcmPatchRAM** | Broadcom Bluetooth |
-| | |
 | **VoodooPS2** | Laptop keyboard |
-| | |
 | **VoodooI2C** | I2C trackpad (modern laptops) |
-| | |
+| **VoodooRMI** | Synaptics trackpad via RMI (smoother than PS2) |
+| **VoodooSMBus** | SMBUS driver required by VoodooRMI |
+| **AlpsHID** | Alps trackpad |
 | **ECEnabler** | Battery and Embedded Controller |
-| | |
 | **SMCBatteryManager** | Battery % in menu bar |
-| | |
 | **BrightnessKeys** | Brightness keys |
-| | |
 | **CPUFriend** | CPU power management |
-| | |
+| **HibernationFixup** | Sleep/wake fix (laptops) |
+| **NoTouchID** | Stops TouchID login hang |
+| **RadeonSensor + SMCRadeonGPU** | AMD GPU temperature monitoring |
+| **CpuTscSync** | TSC sync fix (Intel desktop) |
+| **AmdTscSync** | TSC sync fix (AMD) |
+| **AMDRyzenCPUPowerManagement** | AMD CPU power + frequency scaling |
+| **SMCAMDProcessor** | AMD CPU temps in VirtualSMC |
+| **RTCMemoryFixup** | Prevents BIOS reset on reboot (Intel gen 6+) |
+| **FeatureUnlock** | Unlocks AirPlay to Mac, Sidecar, Universal Control (Monterey+) |
+| **CryptexFixup** | Fixes cryptex mounting on Ventura+ older CPUs |
+| **GenericUSBXHCI** | XHCI driver for AMD USB controllers |
+| **RealtekCardReader** | Realtek SD card reader |
+| **RealtekCardReaderFriend** | Makes card reader appear native |
+| **AsusSMC** | ASUS fan, backlight, battery (ASUS laptops) |
+| **YogaSMC** | Lenovo fan, backlight, battery (Lenovo laptops) |
+
+<br>
+
+---
+
+## What's new in v1.2
+
+A lot of bugs fixed. Here's the short version:
+
+- **`--dry-run`** — Scan your hardware and see exactly what kexts would be selected, without downloading or touching a USB. Use this to test before committing.
+- **`--export-efi`** — Build the full EFI folder to `~/Desktop/AutoCore_EFI` instead of flashing to USB.
+- **`--version`** — Prints version and exits.
+- **24 new kexts** added to the database: Atheros, Killer E2200, RTL8125, itlwm, IntelBTPatcher, VoodooRMI, VoodooSMBus, AlpsHID, RadeonSensor, SMCRadeonGPU, CpuTscSync, AmdTscSync, RTCMemoryFixup, FeatureUnlock, CryptexFixup, NoTouchID, GenericUSBXHCI, RealtekCardReader, AMDRyzenCPUPowerManagement, SMCAMDProcessor, AsusSMC, YogaSMC, and more.
+- **Trackpad vendor detection** — AutoCore now detects Synaptics / Alps / ELAN and picks the right kext automatically.
+- **System vendor detection** — Detects ASUS / Lenovo / Dell / HP and loads vendor-specific kexts.
+- **All UI strings translated** — No more hardcoded Danish anywhere. Everything goes through `lang.py`.
+- **`XhciPortLimit` fix** — Now correctly `True` for Big Sur and below, `False` for Monterey+.
+- **`-wegnoegpu` fix** — No longer added on laptops where it would break iGPU display output.
+- **AirportItlwm filename fix** — "Big Sur" now correctly matches "BigSur" in the GitHub asset name.
+- **Download cache fix** — Kexts from shared repos (e.g. VirtualSMC sub-kexts) now all extract correctly.
+- **`NEXT_STEPS.md`** written to USB root after flash — BIOS checklist tailored to your hardware generation.
+- **Hardware JSON** saved to `~/Desktop/AutoCore_hardware.json` after scan — easy to share when asking for help.
+- **Internet check** at startup with option to continue offline using cached kexts.
+- **Auto-install** of `requests` and `rich` on first run.
 
 <br>
 
