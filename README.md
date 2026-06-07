@@ -8,7 +8,7 @@
 
 **Supports macOS · Windows · Linux**
 
-**v1.2**
+**Latest V 1.3**
 
 </div>
 
