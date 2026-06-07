@@ -138,7 +138,7 @@ KEXT_DB = {
         "match": {"wifi": ["broadcom", "bcm"]}, "macos_max": None,
     },
     # ── Trackpad / Input ─────────────────────────────────────────────────
-    "VoodooPS2": {
+    "VoodooPS2Controller": {
         "repo": "acidanthera/VoodooPS2", "always": False,
         "description": "Keyboard (most laptop keyboards use PS/2 internally)",
         "extract": ["VoodooPS2Controller.kext"], "laptop_only": True, "macos_max": None,
@@ -200,17 +200,18 @@ KEXT_DB = {
         "laptop_only": True, "match": {"cpu_gen_min": 6}, "macos_max": None,
     },
     # ── GPU / Display ─────────────────────────────────────────────────────
-    "RadeonSensor": {
-        "repo": "aluveitie/RadeonSensor", "always": False,
-        "description": "AMD GPU temperature monitoring",
-        "extract": ["RadeonSensor.kext"],
+    "SMCRadeonSensors": {
+        "repo": "ChefKissInc/SMCRadeonSensors", "always": False,
+        "description": "AMD GPU temperature monitoring and VirtualSMC sensor plugin",
+        "extract": ["SMCRadeonSensors.kext"],
         "match": {"gpu": ["amd", "radeon", "rx "]}, "macos_max": None,
     },
-    "SMCRadeonGPU": {
-        "repo": "aluveitie/RadeonSensor", "always": False,
-        "description": "Exposes AMD GPU temps to VirtualSMC sensors",
-        "extract": ["SMCRadeonGPU.kext"],
-        "match": {"gpu": ["amd", "radeon", "rx "]}, "macos_max": None,
+    "Polaris22Fixup": {
+        "repo": "osy/Polaris22Fixup", "always": False,
+        "description": "Fixes graphical glitches on AMD Polaris RX 400/500 GPUs",
+        "extract": ["Polaris22Fixup.kext"],
+        "match": {"gpu": ["rx 46", "rx 47", "rx 48", "rx 55", "rx 56", "rx 57", "rx 58", "rx 59", "polaris"]},
+        "macos_max": None,
     },
     # ── CPU / Power ───────────────────────────────────────────────────────
     "CpuTscSync": {
@@ -288,6 +289,111 @@ KEXT_DB = {
         "description": "Lenovo ThinkPad/IdeaPad fan control, keyboard backlight, battery",
         "extract": ["YogaSMC.kext"],
         "laptop_only": True, "match": {"system_vendor": ["lenovo"]}, "macos_max": None,
+    },
+    # ── VirtualSMC extra plugins ──────────────────────────────────────────────
+    "SMCLightSensor": {
+        "repo": "acidanthera/VirtualSMC", "always": False,
+        "description": "Ambient light sensor (ALS) support — some laptops only",
+        "extract": ["SMCLightSensor.kext"], "laptop_only": True, "macos_max": None,
+    },
+    "SMCDellSensors": {
+        "repo": "acidanthera/VirtualSMC", "always": False,
+        "description": "Dell laptop fan speed and temperature sensors",
+        "extract": ["SMCDellSensors.kext"],
+        "laptop_only": True, "match": {"system_vendor": ["dell"]}, "macos_max": None,
+    },
+    # ── Ethernet extras ───────────────────────────────────────────────────────
+    "SmallTreeIntel82576": {
+        "repo": "khronokernel/SmallTree-I211-AT-patch", "always": False,
+        "description": "Intel I211-AT ethernet for AMD platform boards lacking IntelMausi support",
+        "extract": ["SmallTreeIntel82576.kext"],
+        "match": {"ethernet": ["i211-at", "82576"]}, "macos_max": None,
+    },
+    "AtherosL1cEthernet": {
+        "repo": "al3xtjames/AtherosL1cEthernet", "always": False,
+        "description": "Atheros AR813x/AR815x gigabit ethernet",
+        "extract": ["AtherosL1cEthernet.kext"],
+        "match": {"ethernet": ["ar813", "ar815", "l1c"]}, "macos_max": None,
+    },
+    "AppleIGC": {
+        "repo": "SongXiaoXi/AppleIGC", "always": False,
+        "description": "Intel I225/I226 2.5GbE ethernet (Tiger Lake+ platform boards)",
+        "extract": ["AppleIGC.kext"],
+        "match": {"ethernet": ["i225", "i226"]}, "macos_max": None,
+    },
+    "AppleIntelE1000e": {
+        "repo": "chris1111/AppleIntelE1000e", "always": False,
+        "description": "Intel Pro/1000 (82574/82573/82566) gigabit ethernet",
+        "extract": ["AppleIntelE1000e.kext"],
+        "match": {"ethernet": ["82574", "82573", "82566", "e1000"]}, "macos_max": None,
+    },
+    "RealtekRTL8100": {
+        "repo": "Mieze/RealtekRTL8100", "always": False,
+        "description": "Realtek RTL8100/8101 fast ethernet",
+        "extract": ["RealtekRTL8100.kext"],
+        "match": {"ethernet": ["rtl8100", "rtl8101"]}, "macos_max": None,
+    },
+    "BCM5722D": {
+        "repo": "chris1111/BCM5722D", "always": False,
+        "description": "Broadcom BCM5722 gigabit ethernet",
+        "extract": ["BCM5722D.kext"],
+        "match": {"ethernet": ["bcm5722", "broadcom 5722"]}, "macos_max": None,
+    },
+    # ── WiFi extras ───────────────────────────────────────────────────────────
+    "ATH9KFixup": {
+        "repo": "chunnann/ATH9KFixup", "always": False,
+        "description": "Enables Atheros AR9xxx WiFi chipsets",
+        "extract": ["ATH9KFixup.kext"],
+        "match": {"wifi": ["ar9", "ath9k", "atheros ar9"]}, "macos_max": None,
+    },
+    # ── USB extras ────────────────────────────────────────────────────────────
+    "USBWakeFixup": {
+        "repo": "osy/USBWakeFixup", "always": False,
+        "description": "Fixes USB device wake-from-sleep issues",
+        "extract": ["USBWakeFixup.kext"], "macos_max": None,
+    },
+    # ── Storage extras ────────────────────────────────────────────────────────
+    "EmeraldSDHC": {
+        "repo": "acidanthera/EmeraldSDHC", "always": False,
+        "description": "Intel SD card reader driver (SDHC/SDXC)",
+        "extract": ["EmeraldSDHC.kext"],
+        "laptop_only": True, "match": {"card_reader": True}, "macos_max": None,
+    },
+    # ── CPU / Power extras ────────────────────────────────────────────────────
+    "AppleMCEReporterDisabler": {
+        "repo": "acidanthera/bugtracker", "always": False,
+        "description": "Disables AppleMCEReporter — required for AMD dual-socket/multi-die to prevent panic",
+        "extract": ["AppleMCEReporterDisabler.kext"],
+        "match": {"cpu_vendor": "AMD"},
+        "manual_download": True,
+        "download_url": "https://github.com/acidanthera/bugtracker/files/3703498/AppleMCEReporterDisabler.kext.zip",
+        "macos_max": None,
+    },
+    "CPUTopologyRebuild": {
+        "repo": "b00t0x/CpuTopologyRebuild", "always": False,
+        "description": "Fixes CPU topology for AMD Zen 3+ multi-die CPUs",
+        "extract": ["CpuTopologyRebuild.kext"],
+        "match": {"cpu_vendor": "AMD"}, "macos_max": None,
+    },
+    # ── Laptop input extras ───────────────────────────────────────────────────
+    "VoodooInput": {
+        "repo": "acidanthera/VoodooInput", "always": False,
+        "description": "Multi-touch support engine required by VoodooI2C for gestures",
+        "extract": ["VoodooInput.kext"],
+        "laptop_only": True, "match": {"trackpad_i2c": True}, "macos_max": None,
+    },
+    "GK701HIDDevice": {
+        "repo": "osy/GK701HIDDevice", "always": False,
+        "description": "ASUS ROG laptop macro keys and media key support",
+        "extract": ["GK701HIDDevice.kext"],
+        "laptop_only": True, "match": {"system_vendor": ["asus"]}, "macos_max": None,
+    },
+    # ── Extras / Debug ────────────────────────────────────────────────────────
+    "DebugEnhancer": {
+        "repo": "acidanthera/DebugEnhancer", "always": False,
+        "description": "Enhanced debug output — enable only for troubleshooting",
+        "extract": ["DebugEnhancer.kext"],
+        "manual_only": True, "macos_max": None,
     },
 }
 
@@ -407,6 +513,10 @@ def select_kexts(hardware, macos_version):
         if info.get("desktop_only") and is_laptop:
             continue
 
+        # Skip kexts that require manual installation
+        if info.get("manual_only"):
+            continue
+
         # macOS version range check
         if info.get("macos_min"):
             min_v = info["macos_min"]
@@ -446,6 +556,10 @@ def select_kexts(hardware, macos_version):
     # Always add SMCBatteryManager for laptops
     if is_laptop and "SMCBatteryManager" not in selected:
         selected.append("SMCBatteryManager")
+
+    # Enforce mutual exclusion: AirportItlwm and itlwm are alternatives, not complements
+    if "AirportItlwm" in selected and "itlwm" in selected:
+        selected.remove("itlwm")
 
     # Drop incompatible kexts
     incompatible = []
@@ -567,7 +681,11 @@ def download_kexts(selected_names, hardware, macos_version, dest_dir):
     for name in selected_names:
         if name not in KEXT_DB:
             continue
-        info    = KEXT_DB[name]
+        info = KEXT_DB[name]
+        if info.get("manual_download"):
+            url = info.get("download_url", f"https://github.com/{info.get('repo', '')}")
+            print(f"  {name:<38} ⚠ manual — {url}")
+            continue
         repo    = info["repo"]
         extract = info.get("extract") or []
         if not extract:
