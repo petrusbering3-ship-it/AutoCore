@@ -14,17 +14,7 @@ import threading
 import time
 import platform
 
-# Auto-installer requests
-def _ensure_deps():
-    try:
-        import requests
-        return requests
-    except ImportError:
-        print("  [AutoCore] Installerer manglende pakke: requests...", end=" ", flush=True)
-        subprocess.run([sys.executable, "-m", "pip", "install", "requests", "--quiet"], check=True)
-        print("✓")
-        import requests
-        return requests
+from utils import _ensure_deps   # BUG-7 fix: reuse shared helper instead of duplicating it
 
 requests = _ensure_deps()
 
@@ -57,7 +47,7 @@ def _get_latest_release(repo):
         r.raise_for_status()
         return r.json()
     except Exception as e:
-        print(f"\n  ! Kunne ikke hente release fra {repo}: {e}")
+        print(f"\n  ! Could not fetch release from {repo}: {e}")
         return None
 
 
@@ -154,7 +144,7 @@ def _download_opencore(base_dir, tmp_dir):
     if not release:
         return False, None, None, None
 
-    version = release.get("tag_name", "ukendt")
+    version = release.get("tag_name", "unknown")
     assets = release.get("assets", [])
 
     asset = next(
@@ -162,7 +152,7 @@ def _download_opencore(base_dir, tmp_dir):
         None
     )
     if not asset:
-        print("FEJL — ingen RELEASE zip fundet")
+        print("ERROR — no RELEASE zip found")
         return False, None, None, None
 
     zip_path = os.path.join(tmp_dir, "OpenCore.zip")
@@ -213,7 +203,7 @@ def _download_opencore(base_dir, tmp_dir):
         shutil.copytree(acpi_src, acpi_samples_dir, dirs_exist_ok=True)
 
     shutil.rmtree(extract_dir, ignore_errors=True)
-    print(f"  ✓ OpenCore {version} klar")
+    print(f"  ✓ OpenCore {version} ready")
     return True, (macrecovery_dst if os.path.exists(macrecovery_dst) else None), \
            (ocvalidate_dst if os.path.exists(ocvalidate_dst) else None), acpi_samples_dir
 
@@ -238,10 +228,10 @@ def _copy_ssdts(hardware, acpi_samples_dir, base_dir):
             copied.append(ssdt)
 
     if copied:
-        print(f"  ✓ {len(copied)} SSDTs kopieret: {', '.join(copied)}")
+        print(f"  ✓ {len(copied)} SSDTs copied: {', '.join(copied)}")
     else:
-        print(f"  ⚠  Ingen pre-built SSDTs fundet i OpenCore-pakken")
-        print(f"     Tilføj manuelt: {', '.join(needed)}")
+        print(f"  ⚠  No pre-built SSDTs found in OpenCore package")
+        print(f"     Add manually: {', '.join(needed)}")
 
     return copied
 
@@ -253,9 +243,9 @@ def _setup_opencanopy(base_dir):
     drivers_dir = os.path.join(base_dir, "EFI", "OC", "Drivers")
     canopy = os.path.join(drivers_dir, "OpenCanopy.efi")
     if os.path.exists(canopy):
-        print("  ✓ OpenCanopy.efi klar (grafisk boot-menu)")
+        print("  ✓ OpenCanopy.efi ready (graphical boot picker)")
         return True
-    print("  ⚠  OpenCanopy.efi ikke fundet i OC Drivers — bruger tekstpicker")
+    print("  ⚠  OpenCanopy.efi not found in OC Drivers — using text picker")
     return False
 
 
@@ -309,7 +299,7 @@ def _download_recovery(macos_version, base_dir, tmp_dir, macrecovery_path):
     recovery_dir = os.path.join(base_dir, "com.apple.recovery.boot")
     os.makedirs(recovery_dir, exist_ok=True)
 
-    print(f"  → macOS {macos_version} recovery (dette tager et øjeblik)...")
+    print(f"  → macOS {macos_version} recovery (this may take a while)...")
 
     if macrecovery_path and os.path.exists(macrecovery_path):
         stop_event = threading.Event()
@@ -346,7 +336,7 @@ def _download_recovery(macos_version, base_dir, tmp_dir, macrecovery_path):
             stop_event.set()
             monitor.join(timeout=3)
             print()
-        print(f"  ! macrecovery.py fejlede — prøver direkte download")
+        print(f"  ! macrecovery.py failed — trying direct download")
 
     return _download_recovery_direct(data, macos_version, recovery_dir)
 
@@ -393,7 +383,7 @@ def _download_recovery_direct(data, macos_version, recovery_dir):
         return ok
 
     except Exception as e:
-        print(f"  ! Recovery download fejlede: {e}")
+        print(f"  ! Recovery download failed: {e}")
         return False
 
 
@@ -408,7 +398,7 @@ def run_ocvalidate(ocvalidate_path, config_path):
     if platform.system() != "Darwin":
         return  # Kun macOS binary
 
-    print("  → Validerer config.plist...", end=" ", flush=True)
+    print("  → Validating config.plist...", end=" ", flush=True)
     try:
         result = subprocess.run(
             [ocvalidate_path, config_path],
@@ -417,12 +407,12 @@ def run_ocvalidate(ocvalidate_path, config_path):
         if result.returncode == 0:
             print("✓")
         else:
-            print("⚠  problemer fundet:")
+            print("⚠  issues found:")
             for line in (result.stdout + result.stderr).splitlines()[:15]:
                 if line.strip():
                     print(f"    {line}")
     except Exception as e:
-        print(f"FEJL ({e})")
+        print(f"ERROR ({e})")
 
 
 # ─── Print oversigt ──────────────────────────────────────────────────────────
@@ -461,7 +451,7 @@ def build(macos_version, kexts_dir, output_dir, hardware=None):
         "smbios_model": "iMac20,1",
     }
 
-    print(f"\n[4/6] Bygger EFI struktur...")
+    print(f"\n[4/6] Building EFI structure...")
 
     # 1. Opret mapper
     _create_efi_structure(output_dir)
@@ -469,7 +459,7 @@ def build(macos_version, kexts_dir, output_dir, hardware=None):
     # 2. Download OpenCore
     ok, macrecovery_path, ocvalidate_path, acpi_samples_dir = _download_opencore(output_dir, tmp_dir)
     if not ok:
-        print("  ! OpenCore download fejlede — stopper")
+        print("  ! OpenCore download failed — stopping")
         return result
 
     result["ocvalidate"] = ocvalidate_path
@@ -481,13 +471,13 @@ def build(macos_version, kexts_dir, output_dir, hardware=None):
 
     # 4. Flyt kexts ind i EFI/OC/Kexts/
     moved = _move_kexts_to_efi(kexts_dir, output_dir)
-    print(f"  ✓ {len(moved)} kexts kopieret til EFI/OC/Kexts/")
+    print(f"  ✓ {len(moved)} kexts copied to EFI/OC/Kexts/")
 
     # 5. OpenCanopy
     result["opencanopy"] = _setup_opencanopy(output_dir)
 
     # 6. Download macOS recovery
-    print(f"[4/6] Downloader macOS {macos_version} recovery...")
+    print(f"  → Downloading macOS {macos_version} recovery...")
     _download_recovery(macos_version, output_dir, tmp_dir, macrecovery_path)
 
     # 7. Ryd op i tmp
@@ -496,8 +486,8 @@ def build(macos_version, kexts_dir, output_dir, hardware=None):
     # 8. Vis struktur
     _print_efi_tree(output_dir)
 
-    print(f"\n  ✓ EFI klar i: {output_dir}")
-    print(f"  → Næste: config_plist.py genererer EFI/OC/config.plist\n")
+    print(f"\n  ✓ EFI ready in: {output_dir}")
+    print(f"  → Next: config_plist.py will generate EFI/OC/config.plist\n")
 
     result["ok"] = True
     return result
@@ -516,23 +506,23 @@ def update_efi(kexts_dir, output_dir, hardware=None):
 
     result = {"ok": False, "ocvalidate": None}
 
-    print("\n[4/6] Opdaterer EFI (OpenCore + kexts)...")
+    print("\n[4/6] Updating EFI (OpenCore + kexts)...")
 
-    # Download ny OpenCore (erstatter BOOT, OC/Drivers, OC/Tools, OC/Resources)
+    # Download fresh OpenCore (replaces BOOT, OC/Drivers, OC/Tools, OC/Resources)
     ok, _, ocvalidate_path, _ = _download_opencore(output_dir, tmp_dir)
     if not ok:
-        print("  ! OpenCore download fejlede")
+        print("  ! OpenCore download failed")
         return result
 
     result["ocvalidate"] = ocvalidate_path
 
-    # Kopier nye kexts til EFI/OC/Kexts/
+    # Copy new kexts into EFI/OC/Kexts/
     moved = _move_kexts_to_efi(kexts_dir, output_dir)
     if moved:
-        print(f"  ✓ {len(moved)} kexts opdateret i EFI/OC/Kexts/")
+        print(f"  ✓ {len(moved)} kexts updated in EFI/OC/Kexts/")
 
     shutil.rmtree(tmp_dir, ignore_errors=True)
-    print("  ✓ EFI opdateret — config.plist uændret\n")
+    print("  ✓ EFI updated — config.plist unchanged\n")
 
     result["ok"] = True
     return result

@@ -177,10 +177,12 @@ def _format_macos(device):
 
 
 def _format_windows(disk_number):
+    # Use "assign" without a letter so Windows picks the next free letter.
+    # _mount_windows() queries the actual assigned letter afterwards.
     script = "\n".join([
         f"select disk {disk_number}", "clean", "convert mbr",
         "create partition primary", "format quick fs=fat32 label=AUTOCORE",
-        "assign letter=E", "exit", "",
+        "assign", "exit", "",
     ])
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
         f.write(script)
@@ -191,6 +193,19 @@ def _format_windows(disk_number):
     except OSError:
         pass
     return rc == 0, err
+
+
+def _get_windows_drive_letter(label="AUTOCORE"):
+    """Return the drive letter (e.g. 'F:\\') for a volume with the given label."""
+    ps = (
+        f"$v = Get-Volume -FileSystemLabel '{label}' -ErrorAction SilentlyContinue; "
+        "if ($v) { $v.DriveLetter + ':\\' }"
+    )
+    stdout, _, rc = _run(["powershell", "-NoProfile", "-Command", ps])
+    letter = stdout.strip()
+    if rc == 0 and letter and ":" in letter:
+        return letter if letter.endswith("\\") else letter + "\\"
+    return ""
 
 
 def _format_linux(device):
@@ -226,7 +241,8 @@ def _mount_macos(device):
 
 def _mount_windows(_disk_number):
     time.sleep(2)
-    return "E:\\"
+    letter = _get_windows_drive_letter("AUTOCORE")
+    return letter or "E:\\"   # fallback if query fails
 
 
 def _mount_linux(device):
@@ -251,7 +267,9 @@ def _eject_macos(device):
 
 
 def _eject_windows(_disk_number):
-    ps = "(New-Object -comObject Shell.Application).Namespace(17).ParseName('E:').InvokeVerb('Eject')"
+    letter = _get_windows_drive_letter("AUTOCORE")
+    drive  = letter.rstrip("\\") if letter else "E:"
+    ps = f"(New-Object -comObject Shell.Application).Namespace(17).ParseName('{drive}').InvokeVerb('Eject')"
     _run(["powershell", "-NoProfile", "-Command", ps])
 
 

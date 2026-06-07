@@ -7,16 +7,12 @@ import subprocess
 
 
 def _ensure_deps():
-    """Auto-install missing Python packages (requests, rich)."""
+    """Auto-install missing Python packages (requests)."""
     missing = []
     try:
         import requests  # noqa: F401
     except ImportError:
         missing.append("requests")
-    try:
-        import rich  # noqa: F401
-    except ImportError:
-        missing.append("rich")
 
     if missing:
         print(f"  [AutoCore] Installing missing packages: {', '.join(missing)}...", end=" ", flush=True)
