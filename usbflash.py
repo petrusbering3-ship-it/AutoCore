@@ -17,10 +17,16 @@ from datetime import datetime
 
 from lang import t
 
+# Suppress console window pop-ups on Windows
+_NO_WINDOW = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+
 
 def _run(cmd, shell=False, timeout=120):
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, shell=shell, timeout=timeout)
+        r = subprocess.run(
+            cmd, capture_output=True, text=True,
+            shell=shell, timeout=timeout, **_NO_WINDOW,
+        )
         return r.stdout.strip(), r.stderr.strip(), r.returncode
     except subprocess.TimeoutExpired:
         return "", "Timeout", -1

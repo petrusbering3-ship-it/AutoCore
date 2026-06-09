@@ -5,6 +5,8 @@ Shared utilities: dependency installer and internet connectivity check.
 import sys
 import subprocess
 
+_NO_WINDOW = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+
 
 def _ensure_deps():
     """Auto-install missing Python packages (requests)."""
@@ -19,7 +21,7 @@ def _ensure_deps():
         try:
             subprocess.run(
                 [sys.executable, "-m", "pip", "install"] + missing + ["--quiet"],
-                check=True
+                check=True, **_NO_WINDOW,
             )
             print("✓")
         except Exception as e:

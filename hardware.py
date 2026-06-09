@@ -11,10 +11,16 @@ import glob
 
 from lang import t
 
+# Suppress console window pop-ups on Windows when spawning sub-processes
+_NO_WINDOW = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+
 
 def _run(cmd, shell=False):
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, shell=shell, timeout=15)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True,
+            shell=shell, timeout=15, **_NO_WINDOW,
+        )
         return result.stdout.strip()
     except Exception:
         return ""
@@ -22,7 +28,7 @@ def _run(cmd, shell=False):
 
 def _ps(cmd):
     """Run a PowerShell command (Windows)."""
-    return _run(["powershell", "-NoProfile", "-Command", cmd])
+    return _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd])
 
 
 def _cmd_exists(cmd):
@@ -148,81 +154,88 @@ def _scan_macos():
 
 # ─── Windows ──────────────────────────────────────────────────────────────────
 
+# Single-shot PowerShell script: collects everything in ONE process launch.
+# Replaces ~12 separate _ps() calls → scan time drops from ~8s to ~1-2s.
+_WIN_SCAN_SCRIPT = r"""
+$r = @{
+    cpu='Unknown'; cores='?'; ram_bytes='0'; gpus=@(); wifi='No WiFi / Unknown';
+    audio='Unknown'; eth=@(); battery=$null; vendor='Unknown'; bios_vendor='';
+    has_nvme=$false; trackpad=@(); has_card_reader=$false; storage=@()
+}
+try { $p=$null; $p=Get-CimInstance Win32_Processor -Property Name,NumberOfCores -ErrorAction Stop
+      $r.cpu=$p.Name; $r.cores=[string]$p.NumberOfCores } catch {}
+try { $r.ram_bytes=[string](Get-CimInstance Win32_ComputerSystem -Property TotalPhysicalMemory -ErrorAction Stop).TotalPhysicalMemory } catch {}
+try { $r.gpus=@(Get-CimInstance Win32_VideoController -Property Name -ErrorAction Stop | Select-Object -ExpandProperty Name) } catch {}
+try { $w=netsh wlan show drivers 2>$null
+      if ($w -match 'Description\s+:\s+(.+)') { $r.wifi=$Matches[1].Trim() } } catch {}
+try { $r.audio=(Get-CimInstance Win32_SoundDevice -Property Name -ErrorAction Stop | Select-Object -First 1).Name } catch {}
+try { $r.eth=@(Get-CimInstance Win32_NetworkAdapter -ErrorAction Stop | Where-Object {$_.NetConnectionStatus -eq 2} | Select-Object -ExpandProperty Name) } catch {}
+try { $b=Get-CimInstance Win32_Battery -Property Name -ErrorAction Stop
+      $r.battery=if($b){$b.Name}else{$null} } catch {}
+try { $r.vendor=(Get-CimInstance Win32_ComputerSystem -Property Manufacturer -ErrorAction Stop).Manufacturer } catch {}
+try { $r.bios_vendor=(Get-CimInstance Win32_BIOS -Property Manufacturer -ErrorAction Stop).Manufacturer } catch {}
+try { $nvme=Get-CimInstance -Namespace root/Microsoft/Windows/Storage -ClassName MSFT_PhysicalDisk -ErrorAction Stop | Where-Object {$_.BusType -eq 17}
+      $r.has_nvme=($nvme -ne $null) } catch {}
+try { $r.trackpad=@(Get-PnpDevice -ErrorAction Stop | Where-Object {$_.FriendlyName -match 'I2C|Precision.*Touchpad|Synaptics|Alps|Elan|HID.*Touchpad'} | Select-Object -ExpandProperty FriendlyName) } catch {}
+try { $cr=Get-PnpDevice -ErrorAction Stop | Where-Object {$_.FriendlyName -match 'Realtek.*Card|RTS5'} | Select-Object -First 1
+      $r.has_card_reader=($cr -ne $null) } catch {}
+try { $r.storage=@(Get-CimInstance Win32_DiskDrive -ErrorAction Stop | ForEach-Object {
+      @{name=$_.Model; ssd=(($_.MediaType -like '*SSD*') -or ($_.Model -like '*SSD*') -or ($_.Model -like '*NVMe*'))} }) } catch {}
+$r | ConvertTo-Json -Depth 3
+"""
+
+
 def _scan_windows():
+    # Run everything in a single PowerShell process — no repeated startup cost.
+    raw = _run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", _WIN_SCAN_SCRIPT],
+    )
+
+    try:
+        d = json.loads(raw)
+    except Exception:
+        d = {}
+
+    def _str(v):
+        return str(v).strip() if v else ""
+
+    def _list(v):
+        if not v:
+            return []
+        if isinstance(v, list):
+            return [str(x).strip() for x in v if x]
+        return [str(v).strip()] if str(v).strip() else []
+
     info = {}
+    info["cpu"]        = _str(d.get("cpu")) or "Unknown"
+    info["cpu_cores"]  = _str(d.get("cores")) or "?"
+    ram = _str(d.get("ram_bytes"))
+    info["ram_gb"]     = int(ram) // (1024 ** 3) if ram.isdigit() else "?"
+    info["gpus"]       = _list(d.get("gpus"))
+    info["wifi"]       = _str(d.get("wifi")) or "No WiFi / Unknown"
+    info["audio_codec"]= _str(d.get("audio")) or "Unknown"
+    info["ethernet"]   = _list(d.get("eth"))
+    info["is_laptop"]  = bool(d.get("battery"))
+    info["system_vendor"] = _str(d.get("vendor")) or "Unknown"
+    bios_raw = _str(d.get("bios_vendor"))
+    info["is_vm"] = any(v in bios_raw for v in ["VMware", "VirtualBox", "VBOX", "QEMU", "Xen", "Parallels"])
+    info["has_nvme"]   = bool(d.get("has_nvme"))
+    info["has_card_reader"] = bool(d.get("has_card_reader"))
 
-    # CPU
-    cpu = _ps("(Get-CimInstance Win32_Processor).Name")
-    if not cpu:
-        raw = _run('wmic cpu get Name /value', shell=True)
-        m = re.search(r'Name=(.+)', raw)
-        cpu = m.group(1).strip() if m else "Unknown"
-    info["cpu"] = cpu
+    storage_raw = d.get("storage") or []
+    if isinstance(storage_raw, dict):
+        storage_raw = [storage_raw]
+    info["storage"] = [
+        {"name": s.get("name", "?"), "ssd": bool(s.get("ssd"))}
+        for s in storage_raw
+    ]
+    # NVMe fallback: check model names if WMI query failed
+    if not info["has_nvme"]:
+        info["has_nvme"] = any("nvme" in s["name"].lower() for s in info["storage"])
 
-    cores = _ps("(Get-CimInstance Win32_Processor).NumberOfCores")
-    info["cpu_cores"] = cores if cores else "?"
-
-    # RAM
-    ram = _ps("(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory")
-    if not ram:
-        raw = _run('wmic ComputerSystem get TotalPhysicalMemory /value', shell=True)
-        m = re.search(r'TotalPhysicalMemory=(\d+)', raw)
-        ram = m.group(1) if m else "0"
-    info["ram_gb"] = int(ram) // (1024 ** 3) if ram.isdigit() else "?"
-
-    # GPU
-    gpus = _ps("(Get-CimInstance Win32_VideoController).Name")
-    if not gpus:
-        raw = _run('wmic path win32_VideoController get Name /value', shell=True)
-        gpus = "\n".join(re.findall(r'Name=(.+)', raw))
-    info["gpus"] = [g.strip() for g in gpus.splitlines() if g.strip()]
-
-    # WiFi
-    wifi_raw = _run('netsh wlan show drivers', shell=True)
-    m = re.search(r'Description\s+:\s+(.+)', wifi_raw)
-    info["wifi"] = m.group(1).strip() if m else "No WiFi / Unknown"
-
-    # Audio
-    audio = _ps("(Get-CimInstance Win32_SoundDevice).Name")
-    if not audio:
-        raw = _run('wmic sounddev get Name /value', shell=True)
-        audio = "\n".join(re.findall(r'Name=(.+)', raw))
-    info["audio_codec"] = ", ".join([a.strip() for a in audio.splitlines() if a.strip()])
-
-    # Ethernet
-    eth = _ps("(Get-CimInstance Win32_NetworkAdapter | Where-Object {$_.NetConnectionStatus -eq 2}).Name")
-    if not eth:
-        raw = _run('wmic nic where "NetConnectionStatus=2" get Name /value', shell=True)
-        eth = "\n".join(re.findall(r'Name=(.+)', raw))
-    info["ethernet"] = [n.strip() for n in eth.splitlines() if n.strip()]
-
-    # Laptop (battery)
-    batt = _ps("(Get-CimInstance Win32_Battery).Name")
-    info["is_laptop"] = bool(batt and batt.strip())
-
-    # Storage + NVMe
-    storage_raw = _ps("Get-CimInstance Win32_DiskDrive | Select-Object Model,MediaType | ConvertTo-Json")
-    try:
-        drives_raw = json.loads(storage_raw)
-        if isinstance(drives_raw, dict):
-            drives_raw = [drives_raw]
-        info["storage"] = [
-            {"name": d.get("Model", "?"), "ssd": "SSD" in (d.get("MediaType") or "")}
-            for d in drives_raw
-        ]
-    except Exception:
-        info["storage"] = []
-
-    nvme_raw = _ps("Get-CimInstance -Namespace root/Microsoft/Windows/Storage -ClassName MSFT_PhysicalDisk | Where-Object {$_.BusType -eq 17} | Select-Object FriendlyName | ConvertTo-Json")
-    try:
-        info["has_nvme"] = bool(json.loads(nvme_raw))
-    except Exception:
-        info["has_nvme"] = any("nvme" in d["name"].lower() for d in info.get("storage", []))
-
-    # Trackpad
-    tp_raw = _ps("Get-PnpDevice | Where-Object {$_.FriendlyName -match 'I2C|HID|Precision|Touchpad'} | Select-Object FriendlyName | ConvertTo-Json")
-    info["trackpad_i2c"] = bool(tp_raw and ("I2C" in tp_raw or "Precision" in tp_raw))
-    tp_lower = (tp_raw or "").lower()
+    tp_list  = _list(d.get("trackpad"))
+    tp_lower = " ".join(tp_list).lower()
+    info["trackpad_i2c"] = any(k in tp_lower for k in ("i2c", "precision"))
     if "synaptics" in tp_lower:
         info["trackpad_vendor"] = "synaptics"
     elif "alps" in tp_lower:
@@ -233,18 +246,6 @@ def _scan_windows():
         info["trackpad_vendor"] = "i2c_hid"
     else:
         info["trackpad_vendor"] = "ps2"
-
-    # System vendor
-    vendor = _ps("(Get-CimInstance Win32_ComputerSystem).Manufacturer")
-    info["system_vendor"] = vendor.strip() if vendor else "Unknown"
-
-    # VM detection
-    bios_raw = _ps("(Get-CimInstance Win32_BIOS).Manufacturer")
-    info["is_vm"] = any(v in bios_raw for v in ["VMware", "VirtualBox", "VBOX", "QEMU", "Xen", "Parallels"])
-
-    # Card reader detection
-    cr_raw = _ps("Get-PnpDevice | Where-Object {$_.FriendlyName -match 'Realtek.*Card|RTS5'} | Select-Object FriendlyName | ConvertTo-Json")
-    info["has_card_reader"] = bool(cr_raw and cr_raw.strip() not in ("null", "[]", ""))
 
     return info
 

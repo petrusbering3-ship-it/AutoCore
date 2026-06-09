@@ -18,6 +18,8 @@ from utils import _ensure_deps   # BUG-7 fix: reuse shared helper instead of dup
 
 requests = _ensure_deps()
 
+_NO_WINDOW = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+
 
 # ─── macOS version → recovery board-id ───────────────────────────────────────
 
@@ -317,6 +319,7 @@ def _download_recovery(macos_version, base_dir, tmp_dir, macrecovery_path):
                     capture_output=True,
                     timeout=3600,
                     cwd=recovery_dir,
+                    **_NO_WINDOW,
                 )
                 if result.returncode == 0:
                     files = os.listdir(recovery_dir)
@@ -402,7 +405,8 @@ def run_ocvalidate(ocvalidate_path, config_path):
     try:
         result = subprocess.run(
             [ocvalidate_path, config_path],
-            capture_output=True, text=True, timeout=15
+            capture_output=True, text=True, timeout=15,
+            **_NO_WINDOW,
         )
         if result.returncode == 0:
             print("✓")
