@@ -37,10 +37,10 @@ a = Analysis(
         "threading", "queue", "subprocess",
         "platform", "json", "re", "time", "glob",
     ],
-    hookspath=[],
+    hookspath=["hooks"],   # local hooks take priority over pyinstaller-hooks-contrib
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["tkinter.test", "unittest", "distutils"],
+    excludes=["tkinter.test", "unittest"],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
