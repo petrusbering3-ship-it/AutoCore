@@ -30,14 +30,14 @@ a = Analysis(
     hiddenimports=[
         # AutoCore modules
         "hardware", "kexts", "efi_builder", "config_plist",
-        "usb", "usb_mapper", "build_coresync",
+        "usbflash", "usb_mapper", "build_coresync",
         "lang", "constants", "utils", "progress",
         # stdlib used at runtime
         "plistlib", "zipfile", "shutil", "tempfile",
         "threading", "queue", "subprocess",
         "platform", "json", "re", "time", "glob",
     ],
-    hookspath=["hooks"],   # local hooks take priority over pyinstaller-hooks-contrib
+    hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=["tkinter.test", "unittest"],

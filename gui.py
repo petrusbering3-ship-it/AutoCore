@@ -734,7 +734,7 @@ class AutoCoreApp(ctk.CTk):
         self._refresh_drives()
 
     def _refresh_drives(self):
-        import usb as _usb
+        import usbflash as _usb
         drives = _usb.list_drives()
         safe   = [d for d in drives if 4 <= d["size_gb"] <= 512]
         self._safe_drives = safe
@@ -821,7 +821,7 @@ class AutoCoreApp(ctk.CTk):
         out_dir = self._output_dir
         hw      = self._hw
 
-        import usb as _usb
+        import usbflash as _usb
 
         def _flash():
             device = drive["device"]

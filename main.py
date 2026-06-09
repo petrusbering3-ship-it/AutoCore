@@ -341,7 +341,7 @@ def main():
 
     # ── USB Mapper (macOS only) ───────────────────────────────────────────────
     if platform.system() == "Darwin":
-        import usb_mapper
+        import usbflash as usb_mapper
         smbios = config_plist._get_smbios(hw)
         usb_mapper.run(smbios, kexts_dir, output_dir, config_path)
 
@@ -371,7 +371,7 @@ def main():
         sys.exit(0)
 
     # ── Step 6: Flash USB ─────────────────────────────────────────────────────
-    import usb
+    import usbflash as usb
     success = usb.flash_usb(output_dir, hardware=hw)
 
     if success:

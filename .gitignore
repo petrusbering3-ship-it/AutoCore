@@ -9,6 +9,11 @@ _tools/
 _kexts/
 autocore_build/
 
+# PyInstaller
+build/
+dist/
+*.spec.bak
+
 # macOS
 .DS_Store
 .AppleDouble
