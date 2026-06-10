@@ -647,8 +647,8 @@ def print_summary(config_path, hardware, selected_kexts):
     acpi = config.get("ACPI", {}).get("Add", [])
 
     serial = pi.get("SystemSerialNumber", "?")
-    # Mask serial regardless of length
-    if len(serial) >= 4:
+    # Mask serial regardless of length (prefix + suffix overlap below 6 chars)
+    if len(serial) >= 6:
         serial_display = serial[:3] + "X" * (len(serial) - 5) + serial[-2:]
     else:
         serial_display = "????"

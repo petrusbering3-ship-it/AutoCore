@@ -24,8 +24,13 @@ def _bootstrap():
         missing.append("requests")
     if missing:
         print(f"  [AutoCore] Installing: {', '.join(missing)}...", end=" ", flush=True)
-        _sp.run([sys.executable, "-m", "pip", "install"] + missing + ["--quiet"], check=True)
-        print("✓")
+        try:
+            _sp.run([sys.executable, "-m", "pip", "install"] + missing + ["--quiet"], check=True)
+            print("✓")
+        except Exception:
+            print("FAILED")
+            print("  Please run:  pip install " + " ".join(missing))
+            sys.exit(1)
 _bootstrap()
 
 # ── Imports after bootstrap ───────────────────────────────────────────────────
@@ -44,11 +49,19 @@ class _Tee:
     def __init__(self, *streams):
         self._streams = streams
     def write(self, data):
+        # One broken stream (disk full, closed log file) must never take
+        # down every print() in the run.
         for s in self._streams:
-            s.write(data)
+            try:
+                s.write(data)
+            except Exception:
+                pass
     def flush(self):
         for s in self._streams:
-            s.flush()
+            try:
+                s.flush()
+            except Exception:
+                pass
     def fileno(self):
         return self._streams[0].fileno()
 
@@ -344,7 +357,7 @@ def main():
 
     # ── USB Mapper (macOS only) ───────────────────────────────────────────────
     if platform.system() == "Darwin":
-        import usbflash as usb_mapper
+        import usb_mapper
         smbios = config_plist._get_smbios(hw)
         usb_mapper.run(smbios, kexts_dir, output_dir, config_path)
 

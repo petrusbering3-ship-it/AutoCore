@@ -212,7 +212,7 @@ KEXT_DB = {
         "repo": "al3xtjames/NoTouchID", "always": False,
         "description": "Disables TouchID prompt that causes login hangs",
         "extract": ["NoTouchID.kext"],
-        "laptop_only": True, "match": {"cpu_gen_min": 6}, "macos_max": None,
+        "laptop_only": True, "match": {"cpu_vendor": "Intel", "cpu_gen_min": 6}, "macos_max": None,
     },
     # ── GPU / Display ─────────────────────────────────────────────────────
     "SMCRadeonSensors": {

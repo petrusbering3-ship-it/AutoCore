@@ -27,11 +27,16 @@ def _bootstrap():
             missing.append(pkg)
     if missing:
         print(f"  [AutoCore] Installing: {', '.join(missing)}...", end=" ", flush=True)
-        _sp.run(
-            [sys.executable, "-m", "pip", "install"] + missing + ["--quiet"],
-            check=True,
-        )
-        print("✓")
+        try:
+            _sp.run(
+                [sys.executable, "-m", "pip", "install"] + missing + ["--quiet"],
+                check=True,
+            )
+            print("✓")
+        except Exception:
+            print("FAILED")
+            print("  Please run:  pip install " + " ".join(missing))
+            sys.exit(1)
 
 
 _bootstrap()
@@ -318,6 +323,11 @@ class AutoCoreApp(ctk.CTk):
         return tb
 
     def _poll_log(self, textbox: ctk.CTkTextbox):
+        # Stop polling once the step changes and its textbox is destroyed —
+        # otherwise the dead loop raises TclError and keeps draining the
+        # shared queue, stealing log output from the live textbox.
+        if not textbox.winfo_exists():
+            return
         try:
             while True:
                 chunk = self._log_q.get_nowait()
@@ -327,7 +337,6 @@ class AutoCoreApp(ctk.CTk):
                 textbox.configure(state="disabled")
         except queue.Empty:
             pass
-        # Re-schedule only while we're still on the same step's textbox
         self.after(80, lambda: self._poll_log(textbox))
 
     def _run_thread(self, fn, on_done, *args, **kwargs):
@@ -436,11 +445,15 @@ class AutoCoreApp(ctk.CTk):
             return hardware.scan()
 
         def _done(hw, err):
+            if hw:
+                self._hw = hw
+            # User may have navigated away mid-scan — the widgets are gone.
+            if not self._hw_results.winfo_exists():
+                return
             if err or not hw:
                 self._hw_spin.configure(text=f"✗  Scan failed: {err}", text_color=C_ERROR)
                 self._set_status("Scan failed", C_ERROR)
                 return
-            self._hw = hw
             self._render_hw_cards(hw)
             self._set_status("Hardware detected", C_SUCCESS)
             self._set_nav(back=True, next_on=True)
@@ -654,14 +667,17 @@ class AutoCoreApp(ctk.CTk):
             )
 
         def _done(result, err):
+            if result:
+                # Record results even if the user navigated away mid-download
+                self._selected, self._failed = result
+            if not self._kext_bar.winfo_exists():
+                return
             self._kext_bar.set(1.0)
             if err:
                 self._kext_lbl.configure(text=f"Error: {err}", text_color=C_ERROR)
                 self._set_status("Download failed", C_ERROR)
                 return
             selected, failed = result
-            self._selected = selected
-            self._failed   = failed
             for name, icon in self._kext_row_icons.items():
                 icon.configure(
                     text="✗" if name in failed else "✓",
@@ -755,6 +771,8 @@ class AutoCoreApp(ctk.CTk):
             )
 
         def _done(res, err):
+            if not self._build_icons[0].winfo_exists():
+                return
             if err or not res or not res.get("ok"):
                 msg = str(err) if err else "Build failed"
                 for icon in self._build_icons:
@@ -903,24 +921,30 @@ class AutoCoreApp(ctk.CTk):
             f"{d['device']}  ·  {d['name']}  ·  {d['size_gb']:.1f} GB"
             for d in safe
         ]
+        self._drive_labels = labels
         self._drive_menu.configure(values=labels)
         self._drive_var.set(labels[0])
         self._on_drive_pick(labels[0])
 
     def _on_drive_pick(self, label: str):
-        for d in self._safe_drives:
-            if d["device"] in label:
-                self._usb_drive = d
-                self._flash_btn.configure(state="normal")
-                if d["size_gb"] < 16:
-                    self._set_status(
-                        f"⚠  {d['size_gb']:.1f} GB — 16 GB recommended", C_WARN
-                    )
-                else:
-                    self._set_status(
-                        f"Ready to flash {d['device']}  ({d['name']})"
-                    )
-                return
+        # Match by exact label index — substring matching on the device ID
+        # ("1", "2", …on Windows) can hit digits in another drive's size/name
+        # and silently select (and later ERASE) the wrong disk.
+        try:
+            idx = self._drive_labels.index(label)
+        except (AttributeError, ValueError):
+            return
+        d = self._safe_drives[idx]
+        self._usb_drive = d
+        self._flash_btn.configure(state="normal")
+        if d["size_gb"] < 16:
+            self._set_status(
+                f"⚠  {d['size_gb']:.1f} GB — 16 GB recommended", C_WARN
+            )
+        else:
+            self._set_status(
+                f"Ready to flash {d['device']}  ({d['name']})"
+            )
 
     def _confirm_flash(self):
         if not self._usb_drive:
@@ -991,7 +1015,7 @@ class AutoCoreApp(ctk.CTk):
             if os_name == "Darwin":
                 ok, err = _usb._format_macos(device)
             elif os_name == "Windows":
-                ok, err = _usb._format_windows(device)
+                ok, err = _usb._format_windows(device, drive["size_gb"])
             else:
                 ok, err = _usb._format_linux(device)
             if not ok:
