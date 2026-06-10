@@ -35,21 +35,51 @@ _bootstrap()
 import customtkinter as ctk  # noqa: E402
 
 from lang import set_lang  # noqa: E402
-from constants import MACOS_VERSIONS  # noqa: E402
+from constants import MACOS_VERSIONS, MACOS_INFO  # noqa: E402
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
 
 # ── Palette ───────────────────────────────────────────────────────────────────
+# Ported from the AutoCore "Liquid Glass" design system (tokens/colors.css).
+# customtkinter can't do real backdrop-blur, so we approximate the glass look
+# with the design's cool-graphite ink scale + the single system-blue accent
+# ramp + Apple-vibrant semantic colors, generous radii and badge dots.
 
-C_ACCENT  = "#3b82f6"   # blue-500
-C_SUCCESS = "#22c55e"   # green-500
-C_WARN    = "#f59e0b"   # amber-500
-C_ERROR   = "#ef4444"   # red-500
-C_MUTED   = "#64748b"   # slate-500
-C_CARD    = "#1e293b"   # slate-800
-C_HEADER  = "#0f172a"   # slate-900
+C_BG       = "#0b0d13"   # canvas-base — window background (the "aurora" base)
+C_HEADER   = "#0e1016"   # ink-900     — title / footer bars
+C_CARD     = "#171a24"   # ink-800     — raised glass surfaces
+C_CARD_HI  = "#1f2330"   # ink-700     — hover / selected fill
+C_WELL     = "#0e1016"   # ink-900     — inset log "wells"
+C_BORDER   = "#2b303f"   # ink-600     — hairline strokes
+C_STROKE   = "#3c4254"   # ink-500     — brighter rim
+
+C_ACCENT   = "#0a84ff"   # accent-500  — primary system blue
+C_ACCENT_2 = "#0071e3"   # accent-600  — pressed / hover
+C_ACCENT_3 = "#3ea0ff"   # accent-400  — highlight text
+
+C_SUCCESS  = "#30d158"   # vibrant green
+C_WARN     = "#ff9f0a"   # vibrant orange
+C_ERROR    = "#ff453b"   # vibrant red
+
+C_TEXT     = "#d8dce5"   # ink-100     — primary text
+C_MUTED    = "#828b9e"   # ink-300     — secondary text
+C_FAINT    = "#5b6376"   # ink-400     — tertiary / placeholder
+
+# Status-tag colors for the macOS picker
+_TAG_COLOR = {
+    "latest":      C_ACCENT,
+    "recommended": C_SUCCESS,
+    "stable":      C_MUTED,
+    "legacy":      C_WARN,
+}
+_TAG_LABEL = {
+    "latest":      "Latest",
+    "recommended": "Recommended",
+    "stable":      "Stable",
+    "legacy":      "Legacy",
+}
 
 
 # ── stdout → queue bridge ─────────────────────────────────────────────────────
@@ -89,8 +119,10 @@ class AutoCoreApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("AutoCore")
-        self.geometry("760x570")
+        self.geometry("820x620")
+        self.minsize(820, 620)
         self.resizable(False, False)
+        self.configure(fg_color=C_BG)
 
         # ── Shared state ──────────────────────────────────────────────────────
         self._hw          = None
@@ -114,7 +146,7 @@ class AutoCoreApp(ctk.CTk):
         self._build_header()
 
         self._content = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
-        self._content.pack(fill="both", expand=True, padx=24, pady=(10, 0))
+        self._content.pack(fill="both", expand=True, padx=28, pady=(14, 0))
 
         self._build_footer()
         self._show_step(0)
@@ -122,45 +154,56 @@ class AutoCoreApp(ctk.CTk):
     # ── Header ────────────────────────────────────────────────────────────────
 
     def _build_header(self):
-        hdr = ctk.CTkFrame(self, height=56, corner_radius=0, fg_color=C_HEADER)
+        hdr = ctk.CTkFrame(self, height=64, corner_radius=0, fg_color=C_HEADER)
         hdr.pack(fill="x", side="top")
         hdr.pack_propagate(False)
 
+        # Hairline under the header for a bit of depth
+        ctk.CTkFrame(self, height=1, corner_radius=0, fg_color=C_BORDER).pack(fill="x")
+
+        brand = ctk.CTkFrame(hdr, fg_color="transparent")
+        brand.pack(side="left", padx=20)
         ctk.CTkLabel(
-            hdr, text="  ⬛  AutoCore",
-            font=ctk.CTkFont(size=20, weight="bold"),
-            text_color="white",
-        ).pack(side="left", padx=16)
+            brand, text="◆", font=ctk.CTkFont(size=22, weight="bold"),
+            text_color=C_ACCENT,
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkLabel(
+            brand, text="AutoCore",
+            font=ctk.CTkFont(size=21, weight="bold"),
+            text_color=C_TEXT,
+        ).pack(side="left")
 
         self._dots_frame = ctk.CTkFrame(hdr, fg_color="transparent")
-        self._dots_frame.pack(side="right", padx=16)
+        self._dots_frame.pack(side="right", padx=18)
 
         self._dot_labels = []
         step_names = ["Welcome", "Hardware", "macOS", "Kexts", "Build", "Flash"]
         for i in range(self.N_STEPS):
             col = ctk.CTkFrame(self._dots_frame, fg_color="transparent")
-            col.pack(side="left", padx=4)
-            dot = ctk.CTkLabel(col, text="○", font=ctk.CTkFont(size=16),
-                               text_color=C_MUTED, width=16)
+            col.pack(side="left", padx=6)
+            dot = ctk.CTkLabel(col, text="●", font=ctk.CTkFont(size=13),
+                               text_color=C_BORDER, width=14)
             dot.pack()
             ctk.CTkLabel(col, text=step_names[i], font=ctk.CTkFont(size=9),
-                         text_color=C_MUTED).pack()
+                         text_color=C_FAINT).pack(pady=(1, 0))
             self._dot_labels.append(dot)
 
     # ── Footer ────────────────────────────────────────────────────────────────
 
     def _build_footer(self):
-        ftr = ctk.CTkFrame(self, height=60, corner_radius=0, fg_color=C_HEADER)
+        ctk.CTkFrame(self, height=1, corner_radius=0, fg_color=C_BORDER).pack(
+            fill="x", side="bottom")
+        ftr = ctk.CTkFrame(self, height=68, corner_radius=0, fg_color=C_HEADER)
         ftr.pack(fill="x", side="bottom")
         ftr.pack_propagate(False)
 
         self._back_btn = ctk.CTkButton(
-            ftr, text="← Back", width=100,
-            fg_color="transparent", border_width=1, border_color=C_MUTED,
+            ftr, text="← Back", width=104, height=38, corner_radius=10,
+            fg_color="transparent", border_width=1, border_color=C_BORDER,
             text_color=C_MUTED, hover_color=C_CARD,
             command=self._go_back, state="disabled",
         )
-        self._back_btn.pack(side="left", padx=16, pady=10)
+        self._back_btn.pack(side="left", padx=20, pady=14)
 
         self._status_lbl = ctk.CTkLabel(
             ftr, text="", font=ctk.CTkFont(size=12),
@@ -169,11 +212,12 @@ class AutoCoreApp(ctk.CTk):
         self._status_lbl.pack(side="left", padx=8)
 
         self._next_btn = ctk.CTkButton(
-            ftr, text="Next →", width=130,
-            fg_color="#334155", hover_color="#2563eb",
+            ftr, text="Next →", width=140, height=38, corner_radius=10,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=C_CARD, hover_color=C_ACCENT_2, text_color=C_FAINT,
             command=self._go_next, state="disabled",
         )
-        self._next_btn.pack(side="right", padx=16, pady=10)
+        self._next_btn.pack(side="right", padx=20, pady=14)
 
     # ── Navigation ────────────────────────────────────────────────────────────
 
@@ -184,18 +228,19 @@ class AutoCoreApp(ctk.CTk):
             elif i == step:
                 lbl.configure(text="●", text_color=C_ACCENT)
             else:
-                lbl.configure(text="○", text_color=C_MUTED)
+                lbl.configure(text="●", text_color=C_BORDER)
 
     def _set_nav(self, *, back=False, next_text="Next →",
                  next_on=False, next_color=None):
         self._back_btn.configure(
             state="normal" if back else "disabled",
-            text_color="white" if back else C_MUTED,
+            text_color=C_TEXT if back else C_FAINT,
         )
         self._next_btn.configure(
             text=next_text,
             state="normal" if next_on else "disabled",
-            fg_color=(next_color or C_ACCENT) if next_on else "#334155",
+            fg_color=(next_color or C_ACCENT) if next_on else C_CARD,
+            text_color="#ffffff" if next_on else C_FAINT,
         )
 
     def _set_status(self, msg: str, color: str = None):
@@ -224,28 +269,48 @@ class AutoCoreApp(ctk.CTk):
 
     # ── Shared helpers ────────────────────────────────────────────────────────
 
-    def _title(self, parent, text: str, sub: str = None):
+    def _title(self, parent, text: str, sub: str = None, eyebrow: str = None):
+        if eyebrow:
+            ctk.CTkLabel(
+                parent, text=eyebrow.upper(),
+                font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=C_ACCENT_3, anchor="w",
+            ).pack(fill="x", pady=(0, 2))
         ctk.CTkLabel(
             parent, text=text,
-            font=ctk.CTkFont(size=22, weight="bold"),
-            anchor="w",
+            font=ctk.CTkFont(size=24, weight="bold"),
+            text_color=C_TEXT, anchor="w",
         ).pack(fill="x", pady=(0, 2))
         if sub:
             ctk.CTkLabel(
                 parent, text=sub,
                 font=ctk.CTkFont(size=12), text_color=C_MUTED, anchor="w",
-            ).pack(fill="x", pady=(0, 10))
+            ).pack(fill="x", pady=(0, 14))
         else:
-            ctk.CTkFrame(parent, height=1, fg_color="#334155").pack(fill="x", pady=(0, 10))
+            ctk.CTkFrame(parent, height=1, fg_color=C_BORDER).pack(fill="x", pady=(0, 14))
+
+    def _badge(self, parent, text: str, tone: str = "neutral"):
+        """A small pill with a colored leading dot, like the design's Badge."""
+        color = {
+            "accent":  C_ACCENT, "success": C_SUCCESS,
+            "warning": C_WARN,   "danger":  C_ERROR, "neutral": C_MUTED,
+        }.get(tone, C_MUTED)
+        pill = ctk.CTkFrame(parent, fg_color=C_CARD_HI, corner_radius=999)
+        ctk.CTkLabel(pill, text="●", text_color=color,
+                     font=ctk.CTkFont(size=10)).pack(side="left", padx=(10, 4), pady=3)
+        ctk.CTkLabel(pill, text=text, text_color=C_TEXT,
+                     font=ctk.CTkFont(size=11)).pack(side="left", padx=(0, 12))
+        return pill
 
     def _log_box(self, parent, height: int = 90) -> ctk.CTkTextbox:
         tb = ctk.CTkTextbox(
             parent, height=height,
-            font=ctk.CTkFont(family="Courier New", size=11),
-            fg_color="#0f172a", text_color="#94a3b8",
-            corner_radius=6, state="disabled",
+            font=ctk.CTkFont(family="Consolas", size=11),
+            fg_color=C_WELL, text_color=C_MUTED,
+            border_width=1, border_color=C_BORDER,
+            corner_radius=10, state="disabled",
         )
-        tb.pack(fill="x", pady=(8, 0))
+        tb.pack(fill="x", pady=(10, 0))
         return tb
 
     def _poll_log(self, textbox: ctk.CTkTextbox):
@@ -280,45 +345,63 @@ class AutoCoreApp(ctk.CTk):
         self._set_status("")
 
         f = self._content
-        ctk.CTkLabel(f, text="🍎", font=ctk.CTkFont(size=72)).pack(pady=(20, 0))
-        ctk.CTkLabel(f, text="AutoCore",
-                     font=ctk.CTkFont(size=40, weight="bold")).pack()
-        ctk.CTkLabel(f, text="Hackintosh USB Builder  •  v1.3",
-                     font=ctk.CTkFont(size=14), text_color=C_MUTED).pack(pady=(4, 28))
 
-        ctk.CTkLabel(f, text="Language / Sprog",
-                     font=ctk.CTkFont(size=14, weight="bold")).pack(pady=(0, 8))
+        # Logo mark in a rounded "glass" tile
+        tile = ctk.CTkFrame(f, width=96, height=96, corner_radius=24,
+                            fg_color=C_CARD, border_width=1, border_color=C_STROKE)
+        tile.pack(pady=(34, 14))
+        tile.pack_propagate(False)
+        ctk.CTkLabel(tile, text="◆", font=ctk.CTkFont(size=46, weight="bold"),
+                     text_color=C_ACCENT).pack(expand=True)
+
+        ctk.CTkLabel(f, text="AutoCore",
+                     font=ctk.CTkFont(size=42, weight="bold"),
+                     text_color=C_TEXT).pack()
+        ctk.CTkLabel(f, text="Your Hackintosh, assembled in minutes.",
+                     font=ctk.CTkFont(size=14), text_color=C_MUTED).pack(pady=(4, 30))
+
+        ctk.CTkLabel(f, text="LANGUAGE",
+                     font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color=C_ACCENT_3).pack(pady=(0, 8))
 
         lang_row = ctk.CTkFrame(f, fg_color="transparent")
         lang_row.pack()
 
         self._lang_en_btn = ctk.CTkButton(
-            lang_row, text="🇬🇧  English", width=150, height=38,
-            fg_color=C_ACCENT if self._lang == "EN" else "transparent",
-            border_width=1, border_color=C_ACCENT,
+            lang_row, text="English", width=156, height=40, corner_radius=10,
+            font=ctk.CTkFont(size=13),
+            fg_color=C_ACCENT if self._lang == "EN" else C_CARD,
+            hover_color=C_ACCENT_2,
+            border_width=1, border_color=C_ACCENT if self._lang == "EN" else C_BORDER,
             command=lambda: self._pick_lang("EN"),
         )
         self._lang_en_btn.pack(side="left", padx=8)
 
         self._lang_da_btn = ctk.CTkButton(
-            lang_row, text="🇩🇰  Dansk", width=150, height=38,
-            fg_color=C_ACCENT if self._lang == "DA" else "transparent",
-            border_width=1, border_color=C_ACCENT,
+            lang_row, text="Dansk", width=156, height=40, corner_radius=10,
+            font=ctk.CTkFont(size=13),
+            fg_color=C_ACCENT if self._lang == "DA" else C_CARD,
+            hover_color=C_ACCENT_2,
+            border_width=1, border_color=C_ACCENT if self._lang == "DA" else C_BORDER,
             command=lambda: self._pick_lang("DA"),
         )
         self._lang_da_btn.pack(side="left", padx=8)
 
         ctk.CTkLabel(
             f,
-            text="⚠  Requires an internet connection to download kexts and OpenCore",
-            font=ctk.CTkFont(size=11), text_color=C_MUTED,
-        ).pack(pady=(24, 0))
+            text="Requires an internet connection to download kexts and OpenCore.",
+            font=ctk.CTkFont(size=11), text_color=C_FAINT,
+        ).pack(pady=(26, 0))
 
     def _pick_lang(self, code: str):
         self._lang = code
         set_lang(code)
-        self._lang_en_btn.configure(fg_color=C_ACCENT if code == "EN" else "transparent")
-        self._lang_da_btn.configure(fg_color=C_ACCENT if code == "DA" else "transparent")
+        self._lang_en_btn.configure(
+            fg_color=C_ACCENT if code == "EN" else C_CARD,
+            border_color=C_ACCENT if code == "EN" else C_BORDER)
+        self._lang_da_btn.configure(
+            fg_color=C_ACCENT if code == "DA" else C_CARD,
+            border_color=C_ACCENT if code == "DA" else C_BORDER)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Step 1: Hardware scan
@@ -329,15 +412,17 @@ class AutoCoreApp(ctk.CTk):
         self._set_status("Scanning hardware…")
 
         f = self._content
-        self._title(f, "Hardware Scan", "Detecting your system configuration")
+        self._title(f, "Your hardware", "AutoCore scanned this machine — review it before continuing.",
+                    eyebrow="Step 1 · Detect")
 
-        results = ctk.CTkScrollableFrame(f, height=240, fg_color=C_CARD, corner_radius=8)
+        results = ctk.CTkScrollableFrame(f, height=270, fg_color=C_CARD, corner_radius=16,
+                                         border_width=1, border_color=C_STROKE)
         results.pack(fill="x")
         self._hw_results = results
 
-        self._hw_spin = ctk.CTkLabel(results, text="⠙  Scanning…",
+        self._hw_spin = ctk.CTkLabel(results, text="Scanning hardware…",
                                      text_color=C_MUTED, font=ctk.CTkFont(size=13))
-        self._hw_spin.pack(pady=24)
+        self._hw_spin.pack(pady=28)
 
         log = self._log_box(f, height=60)
         self._poll_log(log)
@@ -373,29 +458,31 @@ class AutoCoreApp(ctk.CTk):
         ]
 
         for label, value in fields:
-            row = ctk.CTkFrame(self._hw_results, fg_color="transparent")
-            row.pack(fill="x", padx=12, pady=2)
+            row = ctk.CTkFrame(self._hw_results, fg_color=C_CARD_HI, corner_radius=10)
+            row.pack(fill="x", padx=12, pady=3)
             ctk.CTkLabel(row, text=f"{label}",
-                         font=ctk.CTkFont(size=12, weight="bold"),
-                         text_color=C_MUTED, width=70, anchor="w").pack(side="left")
-            ctk.CTkLabel(row, text=str(value)[:60],
+                         font=ctk.CTkFont(size=11, weight="bold"),
+                         text_color=C_MUTED, width=84, anchor="w").pack(side="left", padx=(12, 0), pady=7)
+            ctk.CTkLabel(row, text=str(value)[:60], text_color=C_TEXT,
                          font=ctk.CTkFont(size=12), anchor="w").pack(side="left", padx=8)
-            ctk.CTkLabel(row, text="✓", text_color=C_SUCCESS,
-                         font=ctk.CTkFont(size=12)).pack(side="right", padx=12)
+            ctk.CTkLabel(row, text="●", text_color=C_SUCCESS,
+                         font=ctk.CTkFont(size=11)).pack(side="right", padx=14)
 
         compat = hw.get("compatibility", {})
         for issue in compat.get("issues", []):
-            card = ctk.CTkFrame(self._hw_results, fg_color="#450a0a", corner_radius=4)
-            card.pack(fill="x", padx=12, pady=2)
-            ctk.CTkLabel(card, text=f"✗  {issue}", text_color=C_ERROR,
+            card = ctk.CTkFrame(self._hw_results, fg_color="#2a1416", corner_radius=10,
+                                border_width=1, border_color="#5e2327")
+            card.pack(fill="x", padx=12, pady=3)
+            ctk.CTkLabel(card, text=f"✕  {issue}", text_color=C_ERROR,
                          font=ctk.CTkFont(size=11), anchor="w",
-                         wraplength=600).pack(padx=10, pady=4, fill="x")
+                         wraplength=620).pack(padx=12, pady=6, fill="x")
         for warn in compat.get("warnings", []):
-            card = ctk.CTkFrame(self._hw_results, fg_color="#431407", corner_radius=4)
-            card.pack(fill="x", padx=12, pady=2)
-            ctk.CTkLabel(card, text=f"⚠  {warn}", text_color=C_WARN,
+            card = ctk.CTkFrame(self._hw_results, fg_color="#2a2110", corner_radius=10,
+                                border_width=1, border_color="#5e4a1f")
+            card.pack(fill="x", padx=12, pady=3)
+            ctk.CTkLabel(card, text=f"!  {warn}", text_color=C_WARN,
                          font=ctk.CTkFont(size=11), anchor="w",
-                         wraplength=600).pack(padx=10, pady=4, fill="x")
+                         wraplength=620).pack(padx=12, pady=6, fill="x")
 
     # ══════════════════════════════════════════════════════════════════════════
     # Step 2: macOS version
@@ -403,59 +490,108 @@ class AutoCoreApp(ctk.CTk):
 
     def _step_macos(self):
         self._set_nav(back=True, next_on=bool(self._macos))
-        self._set_status("Choose a macOS version to install")
+        self._set_status("Choose the release to build for")
 
         f = self._content
-        self._title(f, "Select macOS Version")
-
-        ICONS = {
-            "Big Sur": "🏔", "Monterey": "🌊",
-            "Ventura": "🌁", "Sonoma": "🍇", "Sequoia": "🌲",
-        }
+        self._title(f, "Choose macOS",
+                    "Newest first. The EFI is tuned to the release you pick.",
+                    eyebrow="Step 2 · Target")
 
         grid = ctk.CTkFrame(f, fg_color="transparent")
-        grid.pack(pady=(4, 12))
+        grid.pack(fill="x")
+        grid.grid_columnconfigure((0, 1), weight=1, uniform="macos")
 
-        self._macos_btns = {}
-        for i, ver in enumerate(MACOS_VERSIONS):
-            col, row = i % 3, i // 3
-            btn = ctk.CTkButton(
-                grid,
-                text=f"{ICONS.get(ver, '🍎')}\n{ver}",
-                width=216, height=84,
-                font=ctk.CTkFont(size=14),
-                fg_color=C_ACCENT if self._macos == ver else C_CARD,
-                hover_color="#2563eb",
-                border_width=2,
-                border_color=C_ACCENT if self._macos == ver else "#334155",
-                corner_radius=10,
-                command=lambda v=ver: self._pick_macos(v),
-            )
-            btn.grid(row=row, column=col, padx=6, pady=6)
-            self._macos_btns[ver] = btn
+        # Newest → oldest so the latest/recommended releases sit at the top.
+        ordered = list(reversed(MACOS_VERSIONS))
+        self._macos_cards = {}
+        for i, ver in enumerate(ordered):
+            info = MACOS_INFO.get(ver, {})
+            col, row = i % 2, i // 2
+            card = self._macos_card(grid, ver, info)
+            card.grid(row=row, column=col, padx=5, pady=5, sticky="ew")
+            self._macos_cards[ver] = card
+
+        # Info panel for the selected version (mirrors the design's detail card)
+        self._macos_info = ctk.CTkFrame(f, fg_color=C_CARD, corner_radius=14,
+                                        border_width=1, border_color=C_STROKE)
+        self._macos_info.pack(fill="x", pady=(12, 0))
+        self._macos_info_lbl = ctk.CTkLabel(
+            self._macos_info,
+            text="Select a version to see details and hardware notes.",
+            font=ctk.CTkFont(size=12), text_color=C_MUTED,
+            anchor="w", justify="left", wraplength=720,
+        )
+        self._macos_info_lbl.pack(fill="x", padx=16, pady=12)
+
+        if self._macos:
+            self._render_macos_info(self._macos)
+
+    def _macos_card(self, parent, ver: str, info: dict):
+        sel  = self._macos == ver
+        tag  = info.get("tag", "stable")
+        card = ctk.CTkFrame(
+            parent, corner_radius=12, height=68,
+            fg_color=C_CARD_HI if sel else C_CARD,
+            border_width=2, border_color=C_ACCENT if sel else C_BORDER,
+        )
+        card.pack_propagate(False)
+
+        # Big version number on the left
+        ctk.CTkLabel(card, text=info.get("number", "?"), width=54,
+                     font=ctk.CTkFont(size=22, weight="bold"),
+                     text_color=C_ACCENT_3 if sel else C_MUTED).pack(side="left", padx=(14, 6))
+
+        mid = ctk.CTkFrame(card, fg_color="transparent")
+        mid.pack(side="left", fill="both", expand=True, pady=10)
+        ctk.CTkLabel(mid, text=f"macOS {ver}",
+                     font=ctk.CTkFont(size=15, weight="bold"),
+                     text_color=C_TEXT, anchor="w").pack(fill="x")
+        ctk.CTkLabel(mid, text=str(info.get("year", "")),
+                     font=ctk.CTkFont(size=11), text_color=C_FAINT,
+                     anchor="w").pack(fill="x")
+
+        # Tag chip on the right
+        chip = ctk.CTkLabel(
+            card, text=_TAG_LABEL.get(tag, tag),
+            font=ctk.CTkFont(size=10, weight="bold"),
+            text_color=_TAG_COLOR.get(tag, C_MUTED),
+            fg_color=C_WELL, corner_radius=999, width=92,
+        )
+        chip.pack(side="right", padx=12, pady=10)
+
+        # Make the whole card (and children) clickable
+        for w in (card, mid, chip):
+            w.bind("<Button-1>", lambda _e, v=ver: self._pick_macos(v))
+        for child in mid.winfo_children():
+            child.bind("<Button-1>", lambda _e, v=ver: self._pick_macos(v))
+        return card
+
+    def _pick_macos(self, ver: str):
+        self._macos = ver
+        for v, card in self._macos_cards.items():
+            sel = v == ver
+            card.configure(fg_color=C_CARD_HI if sel else C_CARD,
+                           border_color=C_ACCENT if sel else C_BORDER)
+        self._render_macos_info(ver)
+        self._set_nav(back=True, next_on=True)
+        self._set_status(f"Selected macOS {ver}")
+
+    def _render_macos_info(self, ver: str):
+        info = MACOS_INFO.get(ver, {})
+        lines = [f"macOS {ver}  ·  version {info.get('number', '?')}  ·  {info.get('year', '')}"]
+        if info.get("note"):
+            lines.append(info["note"])
 
         # Hardware-aware hints
         if self._hw:
             import re as _re
-            m = _re.search(r"(\d+)\. gen", self._hw.get("cpu_generation", ""))
+            m   = _re.search(r"(\d+)\. gen", self._hw.get("cpu_generation", ""))
             gen = int(m.group(1)) if m else 0
-            hints = []
-            if gen >= 12:
-                hints.append("⚠  Gen 12+ Intel: Ventura or later recommended")
-            if self._hw.get("cpu_vendor") == "AMD":
-                hints.append("⚠  AMD Ryzen: Ventura recommended for best compatibility")
-            for hint in hints:
-                ctk.CTkLabel(f, text=hint, text_color=C_WARN,
-                             font=ctk.CTkFont(size=12), anchor="w").pack(fill="x")
-
-    def _pick_macos(self, ver: str):
-        self._macos = ver
-        for v, btn in self._macos_btns.items():
-            sel = v == ver
-            btn.configure(fg_color=C_ACCENT if sel else C_CARD,
-                          border_color=C_ACCENT if sel else "#334155")
-        self._set_nav(back=True, next_on=True)
-        self._set_status(f"Selected: {ver}")
+            if self._hw.get("cpu_vendor") == "AMD" and ver in ("High Sierra", "Catalina"):
+                lines.append("Note: AMD Ryzen runs best on Ventura or later.")
+            elif gen and gen >= 12 and ver in ("High Sierra", "Catalina", "Big Sur"):
+                lines.append("Note: 12th-gen+ Intel needs Ventura or later for full support.")
+        self._macos_info_lbl.configure(text="\n".join(lines), text_color=C_TEXT)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Step 3: Kext download
@@ -471,10 +607,13 @@ class AutoCoreApp(ctk.CTk):
         self._set_status(f"Downloading {n} kexts…")
 
         f = self._content
-        self._title(f, "Kexts", f"Downloading {n} kexts selected for your hardware")
+        self._title(f, "Kexts & drivers",
+                    f"AutoCore picked {n} kexts for your hardware — downloading now.",
+                    eyebrow="Step 3 · Drivers")
 
         # Overall progress
-        self._kext_bar = ctk.CTkProgressBar(f, height=10)
+        self._kext_bar = ctk.CTkProgressBar(f, height=10, corner_radius=999,
+                                            progress_color=C_ACCENT, fg_color=C_WELL)
         self._kext_bar.pack(fill="x", pady=(0, 4))
         self._kext_bar.set(0)
 
@@ -484,7 +623,8 @@ class AutoCoreApp(ctk.CTk):
         self._kext_lbl.pack(fill="x")
 
         # Kext list
-        scroll = ctk.CTkScrollableFrame(f, height=200, fg_color=C_CARD, corner_radius=8)
+        scroll = ctk.CTkScrollableFrame(f, height=200, fg_color=C_CARD, corner_radius=14,
+                                        border_width=1, border_color=C_STROKE)
         scroll.pack(fill="x", pady=(6, 0))
 
         self._kext_row_icons = {}
@@ -492,10 +632,11 @@ class AutoCoreApp(ctk.CTk):
             row = ctk.CTkFrame(scroll, fg_color="transparent")
             row.pack(fill="x", padx=10, pady=1)
             icon = ctk.CTkLabel(row, text="○", width=18,
-                                text_color=C_MUTED, font=ctk.CTkFont(size=13))
+                                text_color=C_FAINT, font=ctk.CTkFont(size=13))
             icon.pack(side="left")
-            ctk.CTkLabel(row, text=name + ".kext",
-                         font=ctk.CTkFont(size=12), anchor="w").pack(side="left", padx=6)
+            ctk.CTkLabel(row, text=name + ".kext", text_color=C_TEXT,
+                         font=ctk.CTkFont(family="Consolas", size=12),
+                         anchor="w").pack(side="left", padx=6)
             self._kext_row_icons[name] = icon
 
         log = self._log_box(f, height=56)
@@ -570,10 +711,13 @@ class AutoCoreApp(ctk.CTk):
         self._set_status("Building EFI…")
 
         f = self._content
-        self._title(f, "Build EFI", "Downloading OpenCore, generating config.plist")
+        self._title(f, "Assembling EFI",
+                    "Downloading OpenCore, injecting kexts and generating config.plist.",
+                    eyebrow="Step 4 · Build")
 
         # Step checklist
-        checklist = ctk.CTkFrame(f, fg_color=C_CARD, corner_radius=8)
+        checklist = ctk.CTkFrame(f, fg_color=C_CARD, corner_radius=14,
+                                 border_width=1, border_color=C_STROKE)
         checklist.pack(fill="x")
 
         steps = [
@@ -586,12 +730,12 @@ class AutoCoreApp(ctk.CTk):
         self._build_icons = []
         for s in steps:
             row = ctk.CTkFrame(checklist, fg_color="transparent")
-            row.pack(fill="x", padx=14, pady=5)
+            row.pack(fill="x", padx=16, pady=6)
             icon = ctk.CTkLabel(row, text="○", width=20,
-                                text_color=C_MUTED, font=ctk.CTkFont(size=14))
+                                text_color=C_FAINT, font=ctk.CTkFont(size=14))
             icon.pack(side="left")
-            ctk.CTkLabel(row, text=s, font=ctk.CTkFont(size=13),
-                         anchor="w").pack(side="left", padx=10)
+            ctk.CTkLabel(row, text=s, text_color=C_TEXT,
+                         font=ctk.CTkFont(size=13), anchor="w").pack(side="left", padx=10)
             self._build_icons.append(icon)
 
         log = self._log_box(f, height=156)
@@ -673,36 +817,40 @@ class AutoCoreApp(ctk.CTk):
 
         f = self._content
         self._title(f, "Flash to USB",
-                    "Formats the drive and writes EFI + macOS recovery")
+                    "Formats the drive, then writes the EFI and macOS recovery.",
+                    eyebrow="Step 5 · Install")
 
         # Drive selector row
         sel_row = ctk.CTkFrame(f, fg_color="transparent")
         sel_row.pack(fill="x", pady=(0, 10))
 
-        ctk.CTkLabel(sel_row, text="USB Drive:", width=90,
+        ctk.CTkLabel(sel_row, text="USB drive", width=90, text_color=C_MUTED,
                      font=ctk.CTkFont(size=13), anchor="w").pack(side="left")
 
         self._drive_var  = ctk.StringVar(value="Scanning…")
         self._drive_menu = ctk.CTkOptionMenu(
             sel_row, variable=self._drive_var,
-            values=["Scanning…"], width=360,
+            values=["Scanning…"], width=360, corner_radius=10,
+            fg_color=C_CARD, button_color=C_CARD_HI, button_hover_color=C_ACCENT_2,
             command=self._on_drive_pick,
         )
         self._drive_menu.pack(side="left", padx=(0, 8))
 
         ctk.CTkButton(
-            sel_row, text="↺", width=36,
-            fg_color="transparent", border_width=1, border_color=C_MUTED,
+            sel_row, text="↺", width=40, corner_radius=10,
+            fg_color=C_CARD, hover_color=C_CARD_HI,
+            border_width=1, border_color=C_BORDER,
             font=ctk.CTkFont(size=16),
             command=self._refresh_drives,
         ).pack(side="left")
 
         # Warning banner
-        warn_card = ctk.CTkFrame(f, fg_color="#431407", corner_radius=6)
+        warn_card = ctk.CTkFrame(f, fg_color="#2a2110", corner_radius=10,
+                                 border_width=1, border_color="#5e4a1f")
         warn_card.pack(fill="x", pady=(0, 10))
         ctk.CTkLabel(
             warn_card,
-            text="⚠  This will permanently ERASE the selected drive. "
+            text="This permanently ERASES the selected drive. "
                  "Back up any important data first.",
             text_color=C_WARN, font=ctk.CTkFont(size=12),
             wraplength=680, anchor="w",
@@ -710,15 +858,16 @@ class AutoCoreApp(ctk.CTk):
 
         # Flash button
         self._flash_btn = ctk.CTkButton(
-            f, text="▶  Flash USB", height=46,
+            f, text="Flash USB", height=48, corner_radius=12,
             font=ctk.CTkFont(size=15, weight="bold"),
-            fg_color="#b91c1c", hover_color="#991b1b",
+            fg_color="#c2362f", hover_color="#a32a25",
             state="disabled", command=self._confirm_flash,
         )
         self._flash_btn.pack(fill="x", pady=(0, 10))
 
         # Progress
-        self._usb_bar = ctk.CTkProgressBar(f, height=8)
+        self._usb_bar = ctk.CTkProgressBar(f, height=8, corner_radius=999,
+                                           progress_color=C_ACCENT, fg_color=C_WELL)
         self._usb_bar.pack(fill="x")
         self._usb_bar.set(0)
 
@@ -776,20 +925,25 @@ class AutoCoreApp(ctk.CTk):
 
         dialog = ctk.CTkToplevel(self)
         dialog.title("Confirm erase")
-        dialog.geometry("440x210")
+        dialog.geometry("460x220")
         dialog.resizable(False, False)
+        dialog.configure(fg_color=C_BG)
         dialog.grab_set()
         dialog.lift()
 
         ctk.CTkLabel(
+            dialog, text="Erase this drive?",
+            font=ctk.CTkFont(size=18, weight="bold"), text_color=C_TEXT,
+        ).pack(pady=(22, 4), padx=20)
+        ctk.CTkLabel(
             dialog,
             text=(
-                f"⚠  This will PERMANENTLY ERASE:\n\n"
-                f"     {d['device']}  —  {d['name']}  ({d['size_gb']:.1f} GB)\n\n"
-                "Continue?"
+                f"This will permanently erase:\n"
+                f"{d['device']}  —  {d['name']}  ({d['size_gb']:.1f} GB)"
             ),
-            font=ctk.CTkFont(size=13), wraplength=400,
-        ).pack(pady=20, padx=20)
+            font=ctk.CTkFont(size=13), text_color=C_MUTED,
+            wraplength=400, justify="center",
+        ).pack(pady=(0, 16), padx=20)
 
         btn_row = ctk.CTkFrame(dialog, fg_color="transparent")
         btn_row.pack(pady=4)
@@ -804,14 +958,16 @@ class AutoCoreApp(ctk.CTk):
             self._do_flash()
 
         ctk.CTkButton(
-            btn_row, text="Cancel", width=120,
-            fg_color="transparent", border_width=1, border_color=C_MUTED,
+            btn_row, text="Cancel", width=130, height=40, corner_radius=10,
+            fg_color=C_CARD, hover_color=C_CARD_HI,
+            border_width=1, border_color=C_BORDER, text_color=C_TEXT,
             command=_cancel,
         ).pack(side="left", padx=8)
 
         ctk.CTkButton(
-            btn_row, text="Yes — Erase & Flash", width=180,
-            fg_color="#b91c1c", hover_color="#991b1b",
+            btn_row, text="Erase & flash", width=180, height=40, corner_radius=10,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color="#c2362f", hover_color="#a32a25",
             command=_go,
         ).pack(side="left", padx=8)
 

@@ -22,13 +22,23 @@ _NO_WINDOW = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
 
 
 # ─── macOS version → recovery board-id ───────────────────────────────────────
-
+#
+# Each board-id belongs to a real Mac model; macrecovery downloads the newest
+# recovery that model is entitled to. Apple keeps extending old models to newer
+# releases, so these MUST be re-checked against OpenCorePkg's boards.json
+# periodically. Verified 2026-06-10 against:
+#   https://github.com/acidanthera/OpenCorePkg/blob/master/Utilities/macrecovery/boards.json
+# (Two prior IDs had drifted: the old Ventura board now serves Tahoe, and the
+#  old Sequoia board now serves Monterey — both corrected below.)
 RECOVERY_DATA = {
-    "Big Sur":  {"board_id": "Mac-42FD25EABCABB274", "mlb": "00000000000000000", "os_ver": "11"},
-    "Monterey": {"board_id": "Mac-06F11FD93F0323C5", "mlb": "00000000000000000", "os_ver": "12"},
-    "Ventura":  {"board_id": "Mac-27AD2F918AE68F61", "mlb": "00000000000000000", "os_ver": "13"},
-    "Sonoma":   {"board_id": "Mac-827FAC58A8FDFA22", "mlb": "00000000000000000", "os_ver": "14"},
-    "Sequoia":  {"board_id": "Mac-F60DEB81FF30ACF6", "mlb": "00000000000000000", "os_ver": "15"},
+    "High Sierra": {"board_id": "Mac-94245B3640C91C81", "mlb": "00000000000000000", "os_ver": "10.13"},
+    "Catalina":    {"board_id": "Mac-00BE6ED71E35EB86", "mlb": "00000000000000000", "os_ver": "10.15"},
+    "Big Sur":     {"board_id": "Mac-42FD25EABCABB274", "mlb": "00000000000000000", "os_ver": "11"},
+    "Monterey":    {"board_id": "Mac-06F11FD93F0323C5", "mlb": "00000000000000000", "os_ver": "12"},
+    "Ventura":     {"board_id": "Mac-BE088AF8C5EB4FA2", "mlb": "00000000000000000", "os_ver": "13"},
+    "Sonoma":      {"board_id": "Mac-827FAC58A8FDFA22", "mlb": "00000000000000000", "os_ver": "14"},
+    "Sequoia":     {"board_id": "Mac-7BA5B2DFE22DDD8C", "mlb": "00000000000000000", "os_ver": "15"},
+    "Tahoe":       {"board_id": "Mac-27AD2F918AE68F61", "mlb": "00000000000000000", "os_ver": "26"},
 }
 
 OPENCORE_REPO = "acidanthera/OpenCorePkg"

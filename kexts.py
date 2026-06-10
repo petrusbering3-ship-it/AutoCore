@@ -24,7 +24,7 @@ VERSION_PINS = {
     # "Lilu": "v1.6.7",
 }
 
-MACOS_MIN_BLUETOOTH_FIX = ["Monterey", "Ventura", "Sonoma", "Sequoia"]
+MACOS_MIN_BLUETOOTH_FIX = ["Monterey", "Ventura", "Sonoma", "Sequoia", "Tahoe"]
 
 # ─── Kext database ────────────────────────────────────────────────────────────
 KEXT_DB = {
