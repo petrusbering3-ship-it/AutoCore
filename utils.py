@@ -8,6 +8,28 @@ import subprocess
 _NO_WINDOW = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
 
 
+def force_utf8_output():
+    """Make stdout/stderr UTF-8 with errors='replace'.
+
+    On Windows the console defaults to a legacy code page (e.g. cp1252) that
+    can't encode glyphs like ✓ / ✗ / —. Printing one then raises
+    UnicodeEncodeError. AutoCore prints these constantly (progress, summaries),
+    and in the kext downloader that error was caught and mis-reported as a
+    *download failure*. Reconfiguring to UTF-8 with errors='replace' means a
+    glyph can never crash a print, so output — and download success — is
+    consistent no matter how AutoCore is launched. Call once at startup.
+    """
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        if stream is None:
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            # Older / wrapped streams without reconfigure — ignore.
+            pass
+
+
 def _ensure_deps():
     """Auto-install missing Python packages (requests)."""
     missing = []

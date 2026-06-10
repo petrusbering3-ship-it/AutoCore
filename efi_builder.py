@@ -46,13 +46,24 @@ OPENCORE_REPO = "acidanthera/OpenCorePkg"
 
 # ─── GitHub download hjælper ─────────────────────────────────────────────────
 
+def _gh_headers():
+    """GitHub API headers; honors GITHUB_TOKEN/GH_TOKEN to dodge the 60/hour
+    unauthenticated rate limit (same fix as kexts.py — keeps OpenCore fetches
+    reliable across repeated builds)."""
+    headers = {"Accept": "application/vnd.github+json"}
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token.strip()}"
+    return headers
+
+
 def _get_latest_release(repo):
     url = f"https://api.github.com/repos/{repo}/releases/latest"
     try:
-        r = requests.get(url, timeout=10, headers={"Accept": "application/vnd.github+json"})
+        r = requests.get(url, timeout=10, headers=_gh_headers())
         if r.status_code == 404:
             url_list = f"https://api.github.com/repos/{repo}/releases"
-            r2 = requests.get(url_list, timeout=10, headers={"Accept": "application/vnd.github+json"})
+            r2 = requests.get(url_list, timeout=10, headers=_gh_headers())
             r2.raise_for_status()
             releases = r2.json()
             return releases[0] if releases else None

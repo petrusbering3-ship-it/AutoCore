@@ -11,6 +11,9 @@ import tempfile
 import platform
 import json
 
+from utils import force_utf8_output
+force_utf8_output()   # UTF-8 stdout/stderr so glyphs never crash a print
+
 # ── Auto-install packages before anything else ────────────────────────────────
 import subprocess as _sp
 def _bootstrap():

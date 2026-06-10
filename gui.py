@@ -12,6 +12,10 @@ import platform
 import time
 import subprocess as _sp
 
+from utils import force_utf8_output  # noqa: E402
+
+force_utf8_output()   # UTF-8 stdout/stderr so glyphs never crash a print
+
 
 # ── Bootstrap required packages before any imports ────────────────────────────
 def _bootstrap():

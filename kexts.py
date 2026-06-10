@@ -15,9 +15,22 @@ import time
 
 from lang import t
 from constants import MACOS_VERSIONS, MACOS_ORDER
-from utils import _ensure_deps
+from utils import _ensure_deps, force_utf8_output
 
+force_utf8_output()   # never let an un-encodable glyph crash a print/download
 requests = _ensure_deps()
+
+
+def _safe_print(*args, **kwargs):
+    """print() that can never raise — last-resort guard for legacy consoles."""
+    try:
+        print(*args, **kwargs)
+    except Exception:
+        try:
+            text = " ".join(str(a) for a in args)
+            sys.stdout.write(text.encode("ascii", "replace").decode("ascii"))
+        except Exception:
+            pass
 
 # ─── Version pins ─────────────────────────────────────────────────────────────
 VERSION_PINS = {
@@ -61,7 +74,9 @@ KEXT_DB = {
     },
     # ── USB (always) ─────────────────────────────────────────────────────
     "USBToolBox": {
-        "repo": "USBToolBox/Tool", "always": True,
+        # The kext lives in USBToolBox/Kext (RELEASE zip); USBToolBox/Tool only
+        # ships the mapping tool binary, which is why this used to fail.
+        "repo": "USBToolBox/Kext", "always": True,
         "description": "USB controller mapping",
         "extract": ["USBToolBox.kext"], "macos_max": None,
     },
@@ -400,35 +415,95 @@ KEXT_DB = {
 
 # ─── GitHub release downloader ────────────────────────────────────────────────
 
+# Per-run cache so the same repo is never queried twice (saves API quota).
+_RELEASE_CACHE = {}
+
+
+def _gh_headers():
+    """GitHub API headers, with a token if one is in the environment.
+
+    Unauthenticated requests are capped at 60/hour per IP — enough for a single
+    build but easily exhausted by a couple of rebuilds, which shows up as
+    intermittent '403 rate limit exceeded' kext failures. Setting GITHUB_TOKEN
+    (or GH_TOKEN) raises the limit to 5000/hour and makes downloads reliable.
+    """
+    headers = {"Accept": "application/vnd.github+json"}
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token.strip()}"
+    return headers
+
+
+def _gh_get(url, retries=3):
+    """GET the GitHub API with retries and rate-limit awareness.
+
+    Returns the Response (caller checks status) or None on network failure.
+    On a rate-limit 403/429 it waits for the reset (capped) once, then retries.
+    """
+    for attempt in range(retries):
+        try:
+            r = requests.get(url, timeout=15, headers=_gh_headers())
+        except Exception as e:
+            if attempt < retries - 1:
+                time.sleep(2)
+                continue
+            print(f"\n    ! Network error contacting GitHub: {e}")
+            return None
+
+        # Rate limited — wait for the reset (bounded) and retry once.
+        remaining = r.headers.get("X-RateLimit-Remaining")
+        if r.status_code in (403, 429) and remaining == "0":
+            reset = r.headers.get("X-RateLimit-Reset")
+            wait = 0
+            if reset and reset.isdigit():
+                wait = max(0, int(reset) - int(time.time())) + 2
+            if 0 < wait <= 90 and attempt < retries - 1:
+                print(f"\n    ! GitHub rate limit hit — waiting {wait}s for reset...")
+                time.sleep(wait)
+                continue
+            print("\n    ! GitHub API rate limit exceeded (60/hour unauthenticated).")
+            print("      Set a GITHUB_TOKEN env var to raise it to 5000/hour.")
+            return r
+        return r
+    return None
+
+
 def _get_latest_release(repo, pinned_version=None):
+    if repo in _RELEASE_CACHE:
+        return _RELEASE_CACHE[repo]
+
+    result = None
     pin = pinned_version or VERSION_PINS.get(repo.split("/")[-1])
     if pin:
-        url = f"https://api.github.com/repos/{repo}/releases/tags/{pin}"
-        try:
-            r = requests.get(url, timeout=10, headers={"Accept": "application/vnd.github+json"})
-            if r.status_code == 200:
-                return r.json()
-        except Exception:
-            pass
+        r = _gh_get(f"https://api.github.com/repos/{repo}/releases/tags/{pin}")
+        if r is not None and r.status_code == 200:
+            result = r.json()
 
-    url = f"https://api.github.com/repos/{repo}/releases/latest"
-    try:
-        r = requests.get(url, timeout=10, headers={"Accept": "application/vnd.github+json"})
-        if r.status_code == 404:
-            url_list = f"https://api.github.com/repos/{repo}/releases"
-            r2 = requests.get(url_list, timeout=10, headers={"Accept": "application/vnd.github+json"})
-            r2.raise_for_status()
-            releases = r2.json()
-            return releases[0] if releases else None
-        r.raise_for_status()
-        return r.json()
-    except Exception as e:
-        print(f"\n    ! Could not fetch release from {repo}: {e}")
-        return None
+    if result is None:
+        r = _gh_get(f"https://api.github.com/repos/{repo}/releases/latest")
+        if r is not None and r.status_code == 404:
+            # No "latest" (only pre-releases) — fall back to the releases list.
+            r = _gh_get(f"https://api.github.com/repos/{repo}/releases")
+            if r is not None and r.status_code == 200:
+                releases = r.json()
+                result = releases[0] if releases else None
+        elif r is not None and r.status_code == 200:
+            result = r.json()
+        elif r is not None:
+            print(f"\n    ! Could not fetch release from {repo}: HTTP {r.status_code}")
+
+    if result is not None:
+        _RELEASE_CACHE[repo] = result
+    return result
 
 
 def _download_file_with_retry(url, dest_path, retries=3, delay=2, label=""):
-    """Download with progress output and up to 3 retries."""
+    """Download with progress output and up to 3 retries.
+
+    The actual transfer happens in the ``try``; progress/success printing is
+    kept in ``else`` so a print error (e.g. an un-encodable glyph on a legacy
+    console) can never be caught here and mis-reported as a download failure.
+    """
     for attempt in range(retries):
         try:
             r = requests.get(url, stream=True, timeout=30)
@@ -444,16 +519,18 @@ def _download_file_with_retry(url, dest_path, retries=3, delay=2, label=""):
                     if elapsed > 0.5 and total > 0:
                         pct = int(downloaded / total * 100)
                         mb  = downloaded / (1024 * 1024)
-                        print(f"\r  {label:<30} {pct:3d}%  {mb:.1f} MB", end="", flush=True)
-            mb_total = downloaded / (1024 * 1024)
-            print(f"\r  {label:<30} ✓  {mb_total:.1f} MB")
-            return True
+                        _safe_print(f"\r  {label:<30} {pct:3d}%  {mb:.1f} MB", end="", flush=True)
         except Exception as e:
             if attempt < retries - 1:
-                print(f"\n  ! {label} attempt {attempt + 1} failed — retrying...")
+                _safe_print(f"\n  ! {label} attempt {attempt + 1} failed — retrying...")
                 time.sleep(delay)
             else:
-                print(f"\n  ! {label} download failed after {retries} attempts: {e}")
+                _safe_print(f"\n  ! {label} download failed after {retries} attempts: {e}")
+                return False
+        else:
+            mb_total = downloaded / (1024 * 1024)
+            _safe_print(f"\r  {label:<30} ✓  {mb_total:.1f} MB")
+            return True
     return False
 
 
@@ -466,6 +543,40 @@ def _find_asset(assets, keywords, exclude=None):
         if all(kw.lower() in name for kw in keywords):
             return asset
     return None
+
+
+def _pick_zip_assets(assets, extracts):
+    """Return .zip assets ordered best-first for the kexts we want to extract.
+
+    Some repos publish several zips per release (e.g. USBToolBox ships the
+    mapping tool *and* the kext). Picking the first .zip blindly grabbed the
+    big tool archive, which contains no kext. We rank by whether the asset name
+    mentions a target kext and/or "kext", then by smallest size, so the actual
+    kext archive is tried first.
+    """
+    targets = [e.lower().replace(".kext", "") for e in extracts]
+    skip    = ("debug", "dsym", "source")
+    zips = [
+        a for a in assets
+        if a.get("name", "").lower().endswith(".zip")
+        and not any(s in a["name"].lower() for s in skip)
+    ]
+
+    def rank(a):
+        n = a["name"].lower()
+        name_match = any(t in n for t in targets)
+        has_kext   = "kext" in n
+        if name_match and has_kext:
+            p = 0
+        elif has_kext:
+            p = 1
+        elif name_match:
+            p = 2
+        else:
+            p = 3
+        return (p, a.get("size", 1 << 62))
+
+    return sorted(zips, key=rank)
 
 
 # ─── kext compatibility check ─────────────────────────────────────────────────
@@ -584,11 +695,19 @@ def _download_airportitlwm(macos_version, dest_dir):
         return False
 
     assets = release.get("assets", [])
-    # Fix: strip spaces so "Big Sur" -> "bigsur" to match "BigSur" in filename
-    ver_key = macos_version.lower().replace(" ", "")
-    target = _find_asset(assets, ["airportitlwm", ver_key], exclude=["itlwm_v"])
-    if not target:
-        target = _find_asset(assets, ["airportitlwm"], exclude=["itlwm_v"])
+    # OpenIntelWireless names assets like "AirportItlwm_v2.3.0_stable_Sonoma.kext.zip"
+    # (multi-word releases use underscores, e.g. "Big_Sur"). Match on the macOS
+    # name in any space form, preferring the stable build. Do NOT exclude
+    # "itlwm_v" — that substring also lives inside "airportitlwm_v…", which is
+    # exactly the file we want (this was the long-standing match bug).
+    v = macos_version.lower()
+    ver_keys = [v.replace(" ", "_"), v.replace(" ", ""), v.replace(" ", "-")]
+    target = None
+    for vk in ver_keys:
+        target = (_find_asset(assets, ["airportitlwm", "stable", vk])
+                  or _find_asset(assets, ["airportitlwm", vk]))
+        if target:
+            break
     if not target:
         print(f"  ! AirportItlwm asset not found for {macos_version}")
         return False
@@ -609,7 +728,10 @@ def _download_itlwm(dest_dir):
         return False
 
     assets = release.get("assets", [])
-    target = _find_asset(assets, ["itlwm_v", ".zip"])
+    # Plain itlwm asset: "itlwm_v2.3.0_stable.kext.zip". Exclude "airport" so we
+    # don't accidentally grab the AirportItlwm build.
+    target = (_find_asset(assets, ["itlwm_v", "stable", ".zip"], exclude=["airport"])
+              or _find_asset(assets, ["itlwm_v", ".zip"], exclude=["airport"]))
     if not target:
         print("  ! itlwm asset not found")
         return False
@@ -624,10 +746,29 @@ def _download_itlwm(dest_dir):
 
 # ─── Extract kexts from ZIP ───────────────────────────────────────────────────
 
+def _write_zip_member(z, entry, dest, retries=3):
+    """Write one zip member to dest, retrying briefly on PermissionError.
+
+    On Windows, antivirus/Search indexer can momentarily lock a freshly written
+    file inside a .kext, raising [Errno 13]. A short retry makes extraction
+    reliable instead of intermittently failing the whole kext.
+    """
+    for attempt in range(retries):
+        try:
+            with z.open(entry) as src, open(dest, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+            return True
+        except PermissionError:
+            time.sleep(0.4)
+        except Exception:
+            return False
+    return False
+
+
 def _extract_kext(zip_path, dest_dir, kext_names):
     extracted = []
     try:
-        with zipfile.ZipFile(zip_path, 'r') as z:
+        with zipfile.ZipFile(zip_path, "r") as z:
             all_entries = z.namelist()
             for kext_name in kext_names:
                 kext_entries = [e for e in all_entries if kext_name in e]
@@ -637,13 +778,21 @@ def _extract_kext(zip_path, dest_dir, kext_names):
                     parts = entry.split(kext_name)
                     relative = kext_name + parts[1] if len(parts) > 1 else kext_name
                     dest = os.path.join(dest_dir, relative)
-                    if entry.endswith('/'):
+                    # Directory entries: trailing slash, the bare kext folder
+                    # stored without one, or any path that resolves to a dir.
+                    if (entry.endswith("/") or relative == kext_name
+                            or not os.path.basename(entry)):
                         os.makedirs(dest, exist_ok=True)
-                    else:
-                        os.makedirs(os.path.dirname(dest), exist_ok=True)
-                        with z.open(entry) as src, open(dest, 'wb') as dst:
-                            shutil.copyfileobj(src, dst)
-                extracted.append(kext_name)
+                        continue
+                    os.makedirs(os.path.dirname(dest), exist_ok=True)
+                    if os.path.isdir(dest):
+                        continue  # a deeper entry already created this as a dir
+                    _write_zip_member(z, entry, dest)
+                # Success = the .kext folder exists and actually has files in it,
+                # so one locked file no longer fails the whole extraction.
+                kext_root = os.path.join(dest_dir, kext_name)
+                if os.path.isdir(kext_root) and os.listdir(kext_root):
+                    extracted.append(kext_name)
     except Exception as e:
         print(f"\n    ! Extract failed for {zip_path}: {e}")
     return extracted
@@ -653,8 +802,12 @@ def _extract_kext(zip_path, dest_dir, kext_names):
 
 def download_kexts(selected_names, hardware, macos_version, dest_dir):
     os.makedirs(dest_dir, exist_ok=True)
-    wifi   = hardware.get("wifi", "").lower()
-    failed = []
+    wifi     = hardware.get("wifi", "").lower()
+    failed   = []
+    # Snapshot the requested kexts up front: the WiFi special-cases below
+    # reassign `selected_names`, so we return this original list (not the
+    # mutated one) to keep the selection intact for config.plist generation.
+    requested = list(selected_names)
 
     # AirportItlwm — special per-macOS-version download
     if "AirportItlwm" in selected_names and "intel" in wifi:
@@ -718,24 +871,35 @@ def download_kexts(selected_names, hardware, macos_version, dest_dir):
             failed.extend(names)
             continue
 
-        assets = release.get("assets", [])
-        asset  = _find_asset(assets, [".zip"], exclude=["debug", "dsym", "source"])
-        if not asset:
+        assets     = release.get("assets", [])
+        candidates = _pick_zip_assets(assets, extracts)
+        if not candidates:
             print(f"  ! No ZIP found for {repo}")
             failed.extend(names)
             continue
 
-        zip_path = os.path.join(dest_dir, f"{repo.replace('/', '_')}.zip")
-        if _download_file_with_retry(asset["browser_download_url"], zip_path, label=label):
+        # Try candidates in order (best-named / smallest first) until one
+        # actually yields the kext(s). Repos like USBToolBox ship several zips
+        # (tool + kext); the wrong one has no kext, so we fall through to the
+        # next instead of failing.
+        zip_path  = os.path.join(dest_dir, f"{repo.replace('/', '_')}.zip")
+        extracted = []
+        for asset in candidates[:3]:
+            if not _download_file_with_retry(asset["browser_download_url"], zip_path, label=label):
+                continue
             extracted = _extract_kext(zip_path, dest_dir, extracts)
-            os.remove(zip_path)
-            if not extracted:
-                print(f"  ! No kexts found in ZIP for {repo}")
-                failed.extend(names)
-        else:
+            try:
+                os.remove(zip_path)
+            except OSError:
+                pass
+            if extracted:
+                break
+        if not extracted:
+            print(f"  ! No kexts found in ZIP for {repo}")
             failed.extend(names)
 
-    return failed
+    # Always return (requested_kexts, failed) — callers unpack a 2-tuple.
+    return requested, failed
 
 
 # ─── Print summary ────────────────────────────────────────────────────────────
@@ -768,7 +932,7 @@ def select_and_download(hardware, macos_version, dest_dir):
     print_kext_summary(selected, hardware, macos_version)
 
     print(f"[3/6] Downloading kexts...")
-    failed = download_kexts(list(selected), hardware, macos_version, dest_dir)
+    _, failed = download_kexts(list(selected), hardware, macos_version, dest_dir)
 
     if failed:
         print(f"\n  ! {t('kexts_failed_dl', names=', '.join(failed))}")
