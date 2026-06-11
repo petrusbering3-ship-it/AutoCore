@@ -259,7 +259,11 @@ def _scan_linux():
     cpuinfo = _run("grep 'model name' /proc/cpuinfo | head -1", shell=True)
     m = re.search(r'model name\s*:\s*(.+)', cpuinfo)
     info["cpu"] = m.group(1).strip() if m else "Unknown"
-    info["cpu_cores"] = _run("nproc", shell=True)
+    # Physical cores, not threads — the AMD kernel patches need this exact
+    # number. nproc counts logical CPUs, so only use it as a fallback.
+    cores_raw = _run("grep 'cpu cores' /proc/cpuinfo | head -1", shell=True)
+    m = re.search(r'cpu cores\s*:\s*(\d+)', cores_raw)
+    info["cpu_cores"] = m.group(1) if m else _run("nproc", shell=True)
 
     # RAM
     mem = _run("grep MemTotal /proc/meminfo", shell=True)
@@ -283,8 +287,14 @@ def _scan_linux():
         wifi_iface = next((i for i in ifaces if i.startswith("w")), None)
         info["wifi"] = f"WiFi interface: {wifi_iface}" if wifi_iface else "Unknown"
 
-    # Audio
-    if _cmd_exists("lspci"):
+    # Audio — prefer the actual HDA codec name ("Realtek ALC256") from
+    # /proc/asound: config_plist matches it to the right AppleALC layout-id.
+    # lspci only names the controller, which always falls back to alcid=1.
+    codec_raw = _run("grep -h '^Codec:' /proc/asound/card*/codec#* 2>/dev/null | head -1", shell=True)
+    m = re.search(r'Codec:\s*(.+)', codec_raw)
+    if m:
+        info["audio_codec"] = m.group(1).strip()
+    elif _cmd_exists("lspci"):
         audio_raw = _run("lspci | grep -i 'audio\\|sound'", shell=True)
         info["audio_codec"] = audio_raw.splitlines()[0].split(": ", 1)[-1].strip() if audio_raw else "Unknown"
     else:

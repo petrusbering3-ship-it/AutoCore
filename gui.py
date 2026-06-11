@@ -799,6 +799,26 @@ class AutoCoreApp(ctk.CTk):
                 self._build_icons[3].configure(text="✗", text_color=C_ERROR)
                 print(f"\n  ! config.plist generation failed: {e}")
 
+            # macOS extras — same as the CLI flow: USB port map, CoreSync.app
+            # and config validation.
+            if platform.system() == "Darwin" and self._config_path:
+                try:
+                    import usb_mapper, config_plist
+                    usb_mapper.run(
+                        config_plist._get_smbios(self._hw),
+                        self._kexts_dir, self._output_dir, self._config_path,
+                    )
+                except Exception as e:
+                    print(f"  ! USB mapping failed: {e}")
+                try:
+                    import build_coresync
+                    build_coresync.build(self._output_dir)
+                except Exception as e:
+                    print(f"  ! CoreSync.app build failed: {e}")
+            if self._config_path:
+                import efi_builder
+                efi_builder.run_ocvalidate(res.get("ocvalidate"), self._config_path)
+
             # Recovery download is part of efi_builder.build; mark done
             self._build_icons[4].configure(text="✓", text_color=C_SUCCESS)
 
@@ -1010,6 +1030,15 @@ class AutoCoreApp(ctk.CTk):
         def _flash():
             device = drive["device"]
 
+            # 0. Back up any existing EFI on the stick before erasing (macOS)
+            if os_name == "Darwin":
+                print("  → Checking for existing EFI on USB…", end=" ", flush=True)
+                found = _usb._backup_existing_efi_macos(device)
+                if found is False:
+                    print("none found")
+                elif found is None:
+                    print("(could not check)")
+
             # 1. Format
             print(f"  → Formatting {device}…", end=" ", flush=True)
             if os_name == "Darwin":
@@ -1048,10 +1077,20 @@ class AutoCoreApp(ctk.CTk):
                     "macOS recovery",
                 )
 
-            # 5. Write NEXT_STEPS.md
+            # 5. Copy CoreSync.app (built on macOS in the build step)
+            coresync_src = os.path.join(out_dir, "CoreSync.app")
+            if os.path.exists(coresync_src):
+                import shutil
+                dst = os.path.join(mount, "CoreSync.app")
+                if os.path.exists(dst):
+                    shutil.rmtree(dst)
+                shutil.copytree(coresync_src, dst)
+                print("    → CoreSync.app ✓")
+
+            # 6. Write NEXT_STEPS.md
             _usb._write_next_steps(mount, hardware=hw)
 
-            # 6. Eject
+            # 7. Eject
             print("  → Ejecting…", end=" ", flush=True)
             if os_name == "Darwin":
                 _usb._eject_macos(device)

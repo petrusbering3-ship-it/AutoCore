@@ -8,7 +8,7 @@
 
 **Supports macOS · Windows · Linux**
 
-**Latest V 1.3**
+**Latest V 2.2**
 
 </div>
 
@@ -76,6 +76,17 @@ python3 main.py --version      # Print version and exit.
 
 Missing Python packages are installed automatically. You're welcome.
 
+### Tip: avoid GitHub rate limits
+
+Kexts and OpenCore are downloaded from the GitHub API, which allows only **60 anonymous requests per hour**. One build fits easily — but if you rebuild several times in an hour, downloads start failing with `403 rate limit exceeded`. Set a (free) personal access token to raise the limit to 5000/hour:
+
+```bash
+export GITHUB_TOKEN=ghp_yourtoken     # macOS / Linux
+set GITHUB_TOKEN=ghp_yourtoken        # Windows
+```
+
+No special token permissions are needed — create one at GitHub → Settings → Developer settings → Personal access tokens.
+
 <br>
 
 ---
@@ -89,7 +100,9 @@ Missing Python packages are installed automatically. You're welcome.
 | `kexts.py` | Selects and downloads the right kexts for your hardware and macOS version from GitHub. |
 | `efi_builder.py` | Builds the full EFI folder. Downloads OpenCore (RELEASE), copies kexts, grabs macOS recovery from Apple. |
 | `config_plist.py` | Generates a complete `config.plist`. SMBIOS, serial, MLB and UUID auto-generated via macserial. |
-| `usb.py` | Selects, formats and flashes a USB drive. Writes `NEXT_STEPS.md` with BIOS settings to the USB root. |
+| `usbflash.py` | Selects, formats and flashes a USB drive. Writes `NEXT_STEPS.md` with BIOS settings to the USB root. |
+| `usb_mapper.py` | Auto-maps USB ports via IORegistry and generates UTBMap.kext (macOS only). |
+| `gui.py` | Graphical 6-step wizard (customtkinter). Same flow as `main.py`. |
 | `lang.py` | All Danish / English translations. Import `t()` from here — never hardcode UI strings. |
 | `utils.py` | Shared helpers: auto-installs missing packages, `check_internet()`. |
 | `constants.py` | Shared constants: `MACOS_VERSIONS`, `MACOS_ORDER`. |
