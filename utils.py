@@ -56,16 +56,22 @@ def _ensure_deps():
 
 def check_internet():
     """Ping api.github.com. Returns True if reachable, False otherwise."""
+    import urllib.request
+    import urllib.error
+    # An HTTP error response (403 rate limit, 404, …) still proves the
+    # network is up — only treat transport-level failures as offline.
     try:
-        import urllib.request
         urllib.request.urlopen("https://api.github.com", timeout=6)
+        return True
+    except urllib.error.HTTPError:
         return True
     except Exception:
         pass
     # Second try: Apple CDN
     try:
-        import urllib.request
         urllib.request.urlopen("https://oscdn.apple.com", timeout=6)
+        return True
+    except urllib.error.HTTPError:
         return True
     except Exception:
         return False

@@ -182,12 +182,17 @@ def _format_macos(device):
     return rc == 0, err
 
 
-def _format_windows(disk_number):
+def _format_windows(disk_number, size_gb=0):
     # Use "assign" without a letter so Windows picks the next free letter.
     # _mount_windows() queries the actual assigned letter afterwards.
+    # Windows' native tools refuse to FAT32-format partitions over 32 GB,
+    # so on larger sticks create a 32 GB partition instead of the whole disk.
+    part_cmd = "create partition primary"
+    if size_gb and size_gb > 32:
+        part_cmd += " size=32000"
     script = "\n".join([
         f"select disk {disk_number}", "clean", "convert mbr",
-        "create partition primary", "format quick fs=fat32 label=AUTOCORE",
+        part_cmd, "format quick fs=fat32 label=AUTOCORE",
         "assign", "exit", "",
     ])
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
@@ -439,7 +444,7 @@ def flash_usb(output_dir, hardware=None):
     if os_name == "Darwin":
         ok, err = _format_macos(device)
     elif os_name == "Windows":
-        ok, err = _format_windows(device)
+        ok, err = _format_windows(device, size_gb)
     elif os_name == "Linux":
         ok, err = _format_linux(device)
     else:

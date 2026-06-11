@@ -102,7 +102,15 @@ def _get_audio_layout(audio_codec_str):
             if (key & 0xFFFFFF00) == masked:
                 return val[0], val[1]
     except (ValueError, TypeError):
-        pass
+        # Windows/Linux report a codec *name* ("Realtek ALC256"), not the
+        # numeric id. Match known codec names, longest first so e.g.
+        # "ALC1220" can never be shadowed by a shorter name it contains.
+        s = str(audio_codec_str or "").upper()
+        for name, layout in sorted(
+            CODEC_LAYOUT_MAP.values(), key=lambda v: len(v[0]), reverse=True
+        ):
+            if name.upper() in s:
+                return name, layout
     return "Unknown", 1
 
 
@@ -416,6 +424,10 @@ def _get_kernel_quirks(hardware, macos_version="Sonoma"):
         quirks["AppleXcpmCfgLock"]   = False
         quirks["AppleXcpmExtraMsrs"] = False
         quirks["DisableIoMapper"]    = True
+        # Required for AMD: no native power management, and Monterey+ reads
+        # CPU info that only ProvideCurrentCpuInfo supplies on AMD.
+        quirks["DummyPowerManagement"]   = True
+        quirks["ProvideCurrentCpuInfo"]  = True
         return quirks
 
     quirks["AppleXcpmCfgLock"]    = True
@@ -433,6 +445,62 @@ def _get_kernel_quirks(hardware, macos_version="Sonoma"):
         quirks["AppleCpuPmCfgLock"] = True
 
     return quirks
+
+
+# ─── AMD kernel patches ──────────────────────────────────────────────────────
+
+_AMD_PATCHES_URL = "https://raw.githubusercontent.com/AMD-OSX/AMD_Vanilla/master/patches.plist"
+
+
+def _apply_amd_patches(config, hardware):
+    """Merge the AMD-OSX community kernel patches into Kernel.Patch.
+
+    AMD CPUs cannot boot macOS without these patches. The three
+    'Force cpuid_cores_per_package' patches must carry the machine's
+    physical core count in byte 1 of their Replace value.
+    """
+    print("  → AMD CPU — fetching AMD_Vanilla kernel patches...", end=" ", flush=True)
+    try:
+        r = requests.get(_AMD_PATCHES_URL, timeout=20)
+        r.raise_for_status()
+        amd = plistlib.loads(r.content)
+        patches = amd.get("Kernel", {}).get("Patch", [])
+        if not patches:
+            raise ValueError("no patches in AMD_Vanilla plist")
+    except Exception as e:
+        print(f"FAILED ({e})")
+        print("    ⚠  AMD CPUs CANNOT boot macOS without these patches!")
+        print("       Add Kernel→Patch manually from: https://github.com/AMD-OSX/AMD_Vanilla")
+        return False
+
+    try:
+        cores = int(str(hardware.get("cpu_cores", "")).strip())
+    except (ValueError, TypeError):
+        cores = 0
+    core_warn = not (1 <= cores <= 64)
+    if core_warn:
+        cores = 8
+
+    for p in patches:
+        if "cpuid_cores_per_package" in p.get("Comment", ""):
+            rep = bytearray(p.get("Replace", b""))
+            if len(rep) >= 2:
+                rep[1] = cores
+                p["Replace"] = bytes(rep)
+
+    existing = config.setdefault("Kernel", {}).setdefault("Patch", [])
+    have     = {e.get("Comment", "") for e in existing}
+    added    = 0
+    for p in patches:
+        if p.get("Comment", "") not in have:
+            existing.append(p)
+            added += 1
+
+    print(f"✓ ({added} patches, {cores} cores)")
+    if core_warn:
+        print("    ⚠  Could not detect physical core count — assumed 8.")
+        print("       If wrong, edit the 'Force cpuid_cores_per_package' patches in config.plist.")
+    return True
 
 
 def _get_boot_args(hardware, audio_layout=None):
@@ -578,6 +646,10 @@ def generate(hardware, selected_kexts, macos_version, efi_dir, sample_path=None,
     for key, val in _get_kernel_quirks(hardware, macos_version).items():
         quirks[key] = val
 
+    # ── Kernel.Patch (AMD only — required to boot at all) ────────────────────
+    if hardware.get("cpu_vendor") == "AMD":
+        _apply_amd_patches(config, hardware)
+
     # ── Boot args ────────────────────────────────────────────────────────────
     _nvram_key = "7C436110-AB2A-4BBB-A880-FE41995C9F82"
     config.setdefault("NVRAM", {}).setdefault("Add", {}).setdefault(_nvram_key, {})["boot-args"] = \
@@ -647,8 +719,8 @@ def print_summary(config_path, hardware, selected_kexts):
     acpi = config.get("ACPI", {}).get("Add", [])
 
     serial = pi.get("SystemSerialNumber", "?")
-    # Mask serial regardless of length
-    if len(serial) >= 4:
+    # Mask serial regardless of length (prefix + suffix overlap below 6 chars)
+    if len(serial) >= 6:
         serial_display = serial[:3] + "X" * (len(serial) - 5) + serial[-2:]
     else:
         serial_display = "????"
